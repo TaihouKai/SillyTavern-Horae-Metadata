@@ -4,6 +4,8 @@
 
 ![Image](https://github.com/SenriYuki/SillyTavern-Horae/blob/main/HoraeLogo.jpg)
 
+> **本分支：** 新增「后台分析 / 仅元数据」模式——GM 只写剧情，Horae 通过辅助 API 在后台提取状态并只保存到元数据（绝不写入正文）。详见 [docs/METADATA_MODE.md](docs/METADATA_MODE.md)。
+
 > *Horae（荷赖）— 希腊神话中掌管时序的女神*
 
 长篇 RP 玩家的老毛病你一定遇到过 —— AI 的记忆约等于金鱼：昨天的事说成今天早上，连几天前发生的事都永远说是昨天；上一幕穿校服下一幕突然便服；NPC关系倒置；送出去的礼物凭空消失，丢掉的东西又回到手里。

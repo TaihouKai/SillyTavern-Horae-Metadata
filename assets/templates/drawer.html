@@ -539,6 +539,47 @@
                         </label>
                     </div>
                     
+                    <div class="horae-setting-item horae-state-mode-item">
+                        <label data-i18n="bg.settings.stateMode">
+                            状态记录模式
+                            <select id="horae-setting-state-mode" class="horae-select">
+                                <option value="metadata" data-i18n="bg.settings.stateModeMetadata">后台分析 / 仅元数据</option>
+                                <option value="legacy" data-i18n="bg.settings.stateModeLegacy">旧版 / 内联标签</option>
+                            </select>
+                        </label>
+                        <span class="horae-setting-hint" data-i18n="bg.settings.stateModeHint">
+                            后台分析：主模型只写剧情，不会被要求输出任何 Horae 标签；每条 AI 回复完成后由辅助 API 在后台独立提取状态，只保存到元数据，绝不修改正文。旧版：主模型在回复末尾输出 &lt;horae&gt; 等标签。切换模式不会清除已有数据。
+                        </span>
+                    </div>
+
+                    <div id="horae-bg-mode-options" class="horae-setting-subgroup">
+                        <div class="horae-setting-item">
+                            <label data-i18n="bg.settings.bgAutoAnalyze">
+                                <input type="checkbox" id="horae-setting-bg-auto-analyze" checked>
+                                自动在后台分析新的 AI 回复
+                            </label>
+                            <span class="horae-setting-sub-hint" data-i18n="bg.settings.bgAutoAnalyzeHint">关闭后可在消息面板点击状态标记或魔术棒手动分析。建议在「辅助 API」中配置独立端点。</span>
+                        </div>
+                        <div class="horae-setting-item">
+                            <label data-i18n="bg.settings.bgWaitBeforeSend">
+                                <input type="checkbox" id="horae-setting-bg-wait-before-send" checked>
+                                发送前等待后台分析完成
+                            </label>
+                            <label data-i18n="bg.settings.bgWaitTimeoutSec" style="margin-left:12px;">
+                                上限(秒)
+                                <input type="number" id="horae-setting-bg-wait-timeout" min="0" max="600" value="60" style="width:64px;">
+                            </label>
+                            <span class="horae-setting-sub-hint" data-i18n="bg.settings.bgWaitBeforeSendHint">保证下一回合注入的是上一条回复提交后的最新状态；超时后按已提交状态照常发送。</span>
+                        </div>
+                        <div class="horae-setting-item">
+                            <label data-i18n="bg.settings.bgPrompt">后台分析提示词（留空使用内置默认）</label>
+                            <textarea id="horae-setting-bg-prompt" class="horae-prompt-textarea" rows="6" data-i18n-placeholder="bg.settings.bgPromptPlaceholder" placeholder="留空 = 内置默认。可用占位符：{{state}} {{previousUserMessage}} {{content}} {{speaker}} {{modules}} {{user}} {{char}}"></textarea>
+                            <button id="horae-btn-bg-prompt-reset" class="horae-btn" data-i18n="bg.settings.bgPromptReset" style="margin-top:4px;">
+                                <i class="fa-solid fa-rotate-left"></i> 恢复默认
+                            </button>
+                        </div>
+                    </div>
+
                     <div class="horae-setting-item">
                         <label data-i18n="settings.autoParse">
                             <input type="checkbox" id="horae-setting-auto-parse" checked>

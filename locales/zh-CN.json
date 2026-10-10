@@ -1467,5 +1467,45 @@
         "customMoodPrompt": "情绪追踪提示词",
         "customRpgPrompt": "RPG 提示词",
         "cardProfileMode": "切卡处理方式"
+    },
+    "bg": {
+        "state": {
+            "synced": "已同步",
+            "nochange": "无变化",
+            "running": "分析中",
+            "queued": "排队中",
+            "failed": "分析失败·重试",
+            "outdated": "已过期",
+            "none": "未分析"
+        },
+        "stateHint": {
+            "synced": "本条回复的状态变化已由后台分析提取并保存到元数据。点击可重新分析。",
+            "nochange": "已分析：本条回复没有状态变化。点击可重新分析。",
+            "running": "后台分析进行中…",
+            "queued": "在后台分析队列中等待…",
+            "failed": "后台分析失败，原有状态未被改动。点击重试。",
+            "outdated": "正文在分析后被修改。点击重新分析。",
+            "none": "本条回复尚未分析。点击进行分析。"
+        },
+        "toastQueued": "#{{id}} 已加入后台分析队列",
+        "toastFailed": "#{{id}} 后台分析失败（状态未改动，点击状态标记可重试）：{{error}}",
+        "toastWaiting": "正在等待后台状态分析完成…",
+        "toastWaitTimeout": "后台分析耗时过长，按已提交的状态继续发送",
+        "toastModeMetadata": "已切换到「后台分析 / 仅元数据」模式，已有数据保持不变。",
+        "toastModeLegacy": "已切换到「旧版 / 内联标签」模式，已有数据保持不变。",
+        "settings": {
+            "stateMode": "状态记录模式",
+            "stateModeMetadata": "后台分析 / 仅元数据",
+            "stateModeLegacy": "旧版 / 内联标签",
+            "stateModeHint": "后台分析：主模型只写剧情，不会被要求输出任何 Horae 标签；每条 AI 回复完成后由辅助 API 在后台独立提取状态，只保存到元数据，绝不修改正文。旧版：主模型在回复末尾输出 <horae> 等标签。切换模式不会清除已有数据。",
+            "bgAutoAnalyze": "自动在后台分析新的 AI 回复",
+            "bgAutoAnalyzeHint": "关闭后可在消息面板点击状态标记或魔术棒手动分析。建议在「辅助 API」中配置独立端点。",
+            "bgWaitBeforeSend": "发送前等待后台分析完成",
+            "bgWaitTimeoutSec": "上限(秒)",
+            "bgWaitBeforeSendHint": "保证下一回合注入的是上一条回复提交后的最新状态；超时后按已提交状态照常发送。",
+            "bgPrompt": "后台分析提示词（留空使用内置默认）",
+            "bgPromptPlaceholder": "留空 = 内置默认。可用占位符：{{state}} {{previousUserMessage}} {{content}} {{speaker}} {{modules}} {{user}} {{char}}",
+            "bgPromptReset": "恢复默认"
+        }
     }
 }

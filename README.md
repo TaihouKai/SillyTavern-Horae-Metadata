@@ -4,6 +4,8 @@
 
 ![Image](https://github.com/SenriYuki/SillyTavern-Horae/blob/main/HoraeLogo.jpg)
 
+> **This fork:** adds a **Background / Metadata Only** mode — the GM writes only the story, Horae extracts state in the background via the Auxiliary API and saves it to metadata only (never into message text). See [docs/METADATA_MODE.md](docs/METADATA_MODE.md).
+
 > *Horae — Greek goddesses who governed the orderly progression of time*
 
 Long-form RP players know the pain: AI memory is basically a goldfish. Yesterday's events become "this morning," costumes change between paragraphs, NPC relationships flip, gifted items vanish, and discarded ones reappear.

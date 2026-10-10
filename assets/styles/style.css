@@ -8677,3 +8677,34 @@ body .horae-context-menu {
         width: 95% !important;
     }
 }
+
+/* ============================================
+   Background / Metadata Only 模式：分析状态标记
+   ============================================ */
+.horae-bg-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    padding: 1px 6px;
+    margin-right: 4px;
+    border-radius: 3px;
+    border: 1px solid currentColor;
+    cursor: pointer;
+    white-space: nowrap;
+    color: var(--horae-text-muted);
+    opacity: 0.9;
+}
+.horae-bg-status:hover { opacity: 1; }
+.horae-bg-status[data-state="synced"],
+.horae-bg-status[data-state="nochange"] { color: var(--horae-success); }
+.horae-bg-status[data-state="running"],
+.horae-bg-status[data-state="queued"] { color: var(--horae-accent); }
+.horae-bg-status[data-state="failed"] { color: var(--horae-danger); }
+.horae-bg-status[data-state="outdated"],
+.horae-bg-status[data-state="none"] { color: var(--horae-warning); }
+#horae-bg-mode-options {
+    margin-left: 12px;
+    padding-left: 8px;
+    border-left: 2px solid var(--horae-border);
+}

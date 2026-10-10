@@ -167,6 +167,11 @@ class HoraeManager {
         return text;
     }
 
+    /** 是否为 Background / Metadata Only 模式（主模型不输出任何 Horae 标签） */
+    isMetadataMode() {
+        return this.settings?.stateMode === 'metadata';
+    }
+
     /** 获取当前聊天记录 */
     getChat() {
         return this.context?.chat || [];
@@ -588,7 +593,10 @@ class HoraeManager {
     }
 
     /** 生成紧凑的上下文注入内容（skipLast: swipe时跳过末尾N条消息） */
-    generateCompactPrompt(skipLast = 0) {
+    generateCompactPrompt(skipLast = 0, opts = {}) {
+        // audience: 'main' = 注入主模型；'analyzer' = 后台分析器（保留表格填写要求）
+        const audience = opts.audience === 'analyzer' ? 'analyzer' : 'main';
+        const readOnly = audience === 'analyzer' || this.isMetadataMode();
         const state = this.getLatestState(skipLast);
         const lines = [];
 
@@ -601,8 +609,15 @@ class HoraeManager {
             return en;
         };
         
-        // 状态快照头
-        lines.push(L(
+        // 状态快照头（Metadata Only 模式：只读事实描述，不要求主模型输出任何字段）
+        if (readOnly) lines.push(L(
+            '[当前状态快照——由系统根据已发生的剧情自动记录，供保持叙事连贯参考]',
+            '[Current State Snapshot — recorded automatically from the story so far, for narrative continuity reference]',
+            '[現在の状態スナップショット——これまでの物語からシステムが自動記録、物語の一貫性の参考用]',
+            '[현재 상태 스냅샷——지금까지의 스토리에서 시스템이 자동 기록, 서사 일관성 참고용]',
+            '[Снимок текущего состояния — автоматически записан по сюжету, для согласованности повествования]',
+        ));
+        else lines.push(L(
             '[当前状态快照——对比本回合剧情，仅在<horae>中输出发生实质变化的字段]',
             '[Current State Snapshot — compare with this round\'s plot, only output substantively changed fields in <horae>]',
             '[現在の状態スナップショット——今回のストーリーと比較し、実質的に変化したフィールドのみ<horae>に出力]',
@@ -1195,7 +1210,9 @@ class HoraeManager {
             const tableName = table.name || L('自定义表格','Custom Table','カスタムテーブル','커스텀 테이블','Пользовательская таблица');
             lines.push(`\n[${tableName}](${rows - 1}${L('行','rows','行','행','строк')}×${cols - 1}${L('列','cols','列','열','столбцов')})`);
             
-            if (table.prompt && table.prompt.trim()) {
+            // 主模型在 Metadata Only 模式下不负责填表，填写要求只给后台分析器
+            const tableHints = !this.isMetadataMode() || audience === 'analyzer';
+            if (tableHints && table.prompt && table.prompt.trim()) {
                 lines.push(`(${L('填写要求','Instructions','記入要件','작성 요구사항','Инструкции')}: ${table.prompt.trim()})`);
             }
             
@@ -1261,7 +1278,7 @@ class HoraeManager {
                 }
                 if (!colHasData) emptyCols.push(c);
             }
-            if (emptyCols.length > 0) {
+            if (tableHints && emptyCols.length > 0) {
                 const emptyColNames = emptyCols.map(c => data[`0-${c}`] || `${L('列','Col','列','열','Столбец')}${c}`);
                 lines.push(`(${emptyColNames.join(L('、',', ','、',', ',', '))}${L('：暂无数据，如剧情中已有相关信息请填写',': no data yet, please fill in if relevant info exists in the story','：データなし、ストーリーに関連情報があれば記入してください',': 데이터 없음, 스토리에 관련 정보가 있으면 작성해 주세요',': нет данных, заполните, если в сюжете есть соответствующая информация')})`);
             }
@@ -2050,6 +2067,10 @@ class HoraeManager {
         if (!first.horae_meta) first.horae_meta = createEmptyMeta();
         if (!first.horae_meta.rpg) first.horae_meta.rpg = { bars: {}, status: {}, skills: {} };
         const rpg = first.horae_meta.rpg;
+        // rpg 可能只由配置写入路径创建（仅含 *Config），补齐可合并的数据容器
+        if (!rpg.bars) rpg.bars = {};
+        if (!rpg.status) rpg.status = {};
+        if (!rpg.skills) rpg.skills = {};
 
         const _mUN = this.context?.name1 || '主角';
 
@@ -3013,43 +3034,7 @@ class HoraeManager {
         }
         
         if (parsed) {
-            const existingMeta = this.getMessageMeta(messageIndex);
-            const newMeta = this.mergeParsedToMeta(existingMeta, parsed);
-            
-            // 处理表格更新
-            if (newMeta._tableUpdates) {
-                // 记录表格贡献，用于回退
-                newMeta.tableContributions = newMeta._tableUpdates;
-                this.applyTableUpdates(newMeta._tableUpdates);
-                delete newMeta._tableUpdates;
-            }
-            
-            // 处理AI标记已完成的待办
-            if (parsed.deletedAgenda && parsed.deletedAgenda.length > 0) {
-                this.removeCompletedAgenda(parsed.deletedAgenda);
-            }
-
-            // 场景记忆：将 scene_desc 存入 locationMemory（支持同一回复多场景配对）
-            const descPairs = parsed.scene?._descPairs;
-            if (descPairs?.length > 0) {
-                for (const p of descPairs) {
-                    this._updateLocationMemory(p.location, p.desc);
-                }
-            } else if (parsed.scene?.scene_desc && parsed.scene?.location) {
-                this._updateLocationMemory(parsed.scene.location, parsed.scene.scene_desc);
-            }
-            
-            // 关系网络：合并到 chat[0].horae_meta.relationships
-            if (parsed.relationships && parsed.relationships.length > 0) {
-                this._mergeRelationships(parsed.relationships);
-            }
-            
-            this.setMessageMeta(messageIndex, newMeta);
-            
-            // RPG 数据：合并到 chat[0].horae_meta.rpg
-            if (newMeta._rpgChanges) {
-                this._mergeRpgData(newMeta._rpgChanges, false, messageIndex);
-            }
+            this.applyParsedToMessage(messageIndex, parsed);
             return true;
         } else {
             // 无标签，创建空元数据
@@ -3058,6 +3043,51 @@ class HoraeManager {
             }
             return false;
         }
+    }
+
+    /**
+     * 将已解析的增量合并进该楼层 horae_meta，并同步 chat[0] 聚合数据
+     * （processAIResponse 与后台分析共用，保证两种模式的合并语义一致）
+     */
+    applyParsedToMessage(messageIndex, parsed) {
+        const existingMeta = this.getMessageMeta(messageIndex);
+        const newMeta = this.mergeParsedToMeta(existingMeta, parsed);
+        
+        // 处理表格更新
+        if (newMeta._tableUpdates) {
+            // 记录表格贡献，用于回退
+            newMeta.tableContributions = newMeta._tableUpdates;
+            this.applyTableUpdates(newMeta._tableUpdates);
+            delete newMeta._tableUpdates;
+        }
+        
+        // 处理AI标记已完成的待办
+        if (parsed.deletedAgenda && parsed.deletedAgenda.length > 0) {
+            this.removeCompletedAgenda(parsed.deletedAgenda);
+        }
+
+        // 场景记忆：将 scene_desc 存入 locationMemory（支持同一回复多场景配对）
+        const descPairs = parsed.scene?._descPairs;
+        if (descPairs?.length > 0) {
+            for (const p of descPairs) {
+                this._updateLocationMemory(p.location, p.desc);
+            }
+        } else if (parsed.scene?.scene_desc && parsed.scene?.location) {
+            this._updateLocationMemory(parsed.scene.location, parsed.scene.scene_desc);
+        }
+        
+        // 关系网络：合并到 chat[0].horae_meta.relationships
+        if (parsed.relationships && parsed.relationships.length > 0) {
+            this._mergeRelationships(parsed.relationships);
+        }
+        
+        this.setMessageMeta(messageIndex, newMeta);
+        
+        // RPG 数据：合并到 chat[0].horae_meta.rpg
+        if (newMeta._rpgChanges) {
+            this._mergeRpgData(newMeta._rpgChanges, false, messageIndex);
+        }
+        return newMeta;
     }
 
     /**
@@ -3471,6 +3501,8 @@ class HoraeManager {
     }
 
     generateSystemPromptAddition() {
+        // Metadata Only：主模型不接收任何标签输出规则，状态由后台分析器独立提取
+        if (this.isMetadataMode()) return '';
         const [userName, charName] = this._getDefaultNames();
         const subs = this.generateLocationMemoryPrompt() + this.generateCustomTablesPrompt() +
                      this.generateRelationshipPrompt() + this.generateMoodPrompt() +
@@ -3492,6 +3524,52 @@ class HoraeManager {
             .replace(/\{\{user\}\}/gi, userName)
             .replace(/\{\{char\}\}/gi, charName);
         return '\n' + base;
+    }
+
+    /** 后台分析器使用的各模块格式参考（仅包含已启用模块） */
+    generateBgModulePrompts() {
+        return this.generateLocationMemoryPrompt() + this.generateCustomTablesPrompt() +
+               this.generateRelationshipPrompt() + this.generateMoodPrompt() +
+               this._adaptRpgPromptForAnalyzer(this.generateRpgPrompt()) + this._generateCustomCalendarPrompt();
+    }
+
+    /**
+     * RPG 格式参考原本写给主模型（「每回合必须为每个在场角色写全部属性条」），
+     * 对后台分析器会诱导其为未知角色编造数值。这里把内置文案中的强制句改为增量规则；
+     * 用户自定义的 RPG 提示词不匹配时保持原样（由分析器提示词的优先级说明兜底）。
+     */
+    _adaptRpgPromptForAnalyzer(text) {
+        if (!text) return text;
+        const rules = [
+            ['你的回复末尾必须包含<horaerpg>标签。', 'RPG 数据变化写在 <horaerpg> 块中；没有变化则不写该块。'],
+            ['Your reply MUST include a <horaerpg> tag at the end.', 'Write RPG changes inside a <horaerpg> block; omit the block if nothing changed.'],
+            ['あなたの返信の末尾に必ず<horaerpg>タグを含めてください。', 'RPGの変化は<horaerpg>ブロックに記載。変化がなければ省略。'],
+            ['답변 끝에 반드시 <horaerpg> 태그를 포함해야 합니다.', 'RPG 변화는 <horaerpg> 블록에 기재; 변화가 없으면 생략.'],
+            ['Ваш ответ ДОЛЖЕН включать тег <horaerpg> в конце.', 'Изменения RPG записывайте в блоке <horaerpg>; если изменений нет, блок не нужен.'],
+            ['【属性条——每回合必写，缺少=不合格！】', '【属性条——仅在数值变化或首次由剧情确立时写】'],
+            ['[Status Bars — required every turn, missing = fail!]', '[Status Bars — write only when a value changes or is first established by the story]'],
+            ['【ステータスバー——毎ターン必須、欠落＝不合格！】', '【ステータスバー——数値が変化した時、または物語で初めて確定した時のみ記載】'],
+            ['【스테이터스 바 — 매 턴 필수, 누락 = 불합격!】', '【스테이터스 바 — 수치가 변하거나 스토리에서 처음 확정될 때만 기재】'],
+            ['[Шкалы статуса — обязательны каждый ход, пропуск = провал!]', '[Шкалы статуса — только при изменении или первом установлении сюжетом]'],
+            ['必须为 characters: 中每个在场角色输出全部属性条和状态：', '在场角色的属性条/状态发生变化（或首次由剧情明确）时，写出变化后的当前值：'],
+            ['MUST output ALL status bars and status for EVERY present character in characters: list:', 'When a present character\'s bar/status changes (or is first established by the text), write its current value:'],
+            ['characters: リスト内のすべての登場キャラクターについて、全ステータスバーとステータスを出力する必要があります：', '登場キャラクターのバー/ステータスが変化した（または初めて確定した）時、現在値を記載：'],
+            ['characters: 목록의 모든 등장 캐릭터에 대해 전체 스테이터스 바와 상태를 출력해야 합니다:', '등장 캐릭터의 바/상태가 변하거나 처음 확정될 때 현재 값을 기재:'],
+            ['НЕОБХОДИМО вывести ВСЕ шкалы статуса и состояние для КАЖДОГО присутствующего персонажа в списке characters:', 'Когда шкала/состояние присутствующего персонажа меняется (или впервые установлено текстом), запишите текущее значение:'],
+            ['  - 每个在场角色的每个属性条都必须写，漏写任何一人=不合格\n', '  - 剧情没有确立数值的角色，禁止编造其属性条\n'],
+            ['  - Every present character\'s every status bar MUST be written; missing anyone = fail\n', '  - Never invent bar values for characters whose stats the story has not established\n'],
+            ['  - 登場中の各キャラクターのすべてのステータスバーを書く必要があります；誰か一人でも漏れ＝不合格\n', '  - 物語で確定していないキャラクターの数値を捏造しない\n'],
+            ['  - 등장 중인 모든 캐릭터의 모든 스테이터스 바를 작성해야 합니다; 누구 하나라도 누락 = 불합격\n', '  - 스토리에서 확정되지 않은 캐릭터의 수치를 지어내지 말 것\n'],
+            ['  - Каждая шкала каждого присутствующего персонажа ДОЛЖНА быть записана; пропуск кого-либо = провал\n', '  - Не выдумывайте значения шкал для персонажей, чьи показатели не установлены сюжетом\n'],
+            ['  - 即使本回合数值无变化，也必须写出当前值\n', '  - 数值无变化则不写\n'],
+            ['  - Even if values didn\'t change this turn, MUST still write current values\n', '  - If a value did not change, omit it\n'],
+            ['  - 今回のターンで数値に変化がなくても、現在の値を必ず記載すること\n', '  - 数値に変化がなければ省略\n'],
+            ['  - 이번 턴에 수치 변화가 없더라도 현재 값을 반드시 기재할 것\n', '  - 수치 변화가 없으면 생략\n'],
+            ['  - Даже если значения не изменились в этом ходу, НЕОБХОДИМО записать текущие значения\n', '  - Если значение не изменилось, не записывайте его\n'],
+        ];
+        let out = text;
+        for (const [from, to] of rules) out = out.split(from).join(to);
+        return out;
     }
 
     getDefaultSystemPrompt(vars = null) {

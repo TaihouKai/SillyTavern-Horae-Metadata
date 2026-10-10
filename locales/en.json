@@ -1470,5 +1470,45 @@
         "customMoodPrompt": "Mood prompt",
         "customRpgPrompt": "RPG prompt",
         "cardProfileMode": "Card-switch behavior"
+    },
+    "bg": {
+        "state": {
+            "synced": "Synced",
+            "nochange": "No changes",
+            "running": "Analyzing",
+            "queued": "Queued",
+            "failed": "Failed · Retry",
+            "outdated": "Outdated",
+            "none": "Not analyzed"
+        },
+        "stateHint": {
+            "synced": "State changes from this reply were extracted in the background and saved to metadata. Click to re-analyze.",
+            "nochange": "Analyzed: this reply contains no state changes. Click to re-analyze.",
+            "running": "Background analysis in progress…",
+            "queued": "Waiting in the background analysis queue…",
+            "failed": "Background analysis failed; previous state was left untouched. Click to retry.",
+            "outdated": "The message text changed after analysis. Click to re-analyze.",
+            "none": "This reply has not been analyzed yet. Click to analyze."
+        },
+        "toastQueued": "Message #{{id}} queued for background analysis",
+        "toastFailed": "Background analysis failed for #{{id}} (state unchanged, click the badge to retry): {{error}}",
+        "toastWaiting": "Waiting for background state analysis to finish…",
+        "toastWaitTimeout": "Background analysis is taking too long; sending with the last committed state",
+        "toastModeMetadata": "Switched to Background / Metadata only mode. Existing data is kept.",
+        "toastModeLegacy": "Switched to Legacy / Inline tags mode. Existing data is kept.",
+        "settings": {
+            "stateMode": "State tracking mode",
+            "stateModeMetadata": "Background analysis / Metadata only",
+            "stateModeLegacy": "Legacy / Inline tags",
+            "stateModeHint": "Background analysis: the main model only writes the story and is never asked to output Horae tags; after each AI reply completes, the auxiliary API extracts state changes in the background and saves them to metadata only, never modifying the message text. Legacy: the main model appends <horae> tags to its replies. Switching modes does not erase any data.",
+            "bgAutoAnalyze": "Automatically analyze new AI replies in the background",
+            "bgAutoAnalyzeHint": "When off, click the status badge or the magic wand on a message panel to analyze manually. A dedicated endpoint under \"Auxiliary API\" is recommended.",
+            "bgWaitBeforeSend": "Wait for background analysis before sending",
+            "bgWaitTimeoutSec": "Max (s)",
+            "bgWaitBeforeSendHint": "Ensures the next turn receives the state committed from the previous reply; after the timeout, sending continues with the last committed state.",
+            "bgPrompt": "Background analysis prompt (empty = built-in default)",
+            "bgPromptPlaceholder": "Empty = built-in default. Placeholders: {{state}} {{previousUserMessage}} {{content}} {{speaker}} {{modules}} {{user}} {{char}}",
+            "bgPromptReset": "Reset to default"
+        }
     }
 }

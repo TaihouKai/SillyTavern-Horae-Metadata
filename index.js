@@ -12,6 +12,7 @@ import { slideToggle } from '/lib.js';
 
 import { horaeManager, createEmptyMeta, getItemBaseName } from './core/horaeManager.js';
 import { vectorManager } from './core/vectorManager.js';
+import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH } from './core/bgAnalysis.js';
 import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate } from './utils/timeUtils.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
 import { initPromptDefaults, ensurePromptDefaults, ensurePresetPrompts, getPromptDefaultSync, getPresetPromptsSync, BUILTIN_PRESET_IDS } from './core/promptDefaults.js';
@@ -118,6 +119,13 @@ const DEFAULT_SETTINGS = {
     uiLanguage: 'auto',
     aiOutputLanguage: 'auto',
     enabled: true,
+    // 状态持久化模式：metadata = 后台分析 + 仅写元数据（新安装默认）；legacy = 主模型输出内联标签
+    // 已有安装在 loadSettings 中迁移为 legacy，不静默改变老用户行为
+    stateMode: 'metadata',
+    bgAutoAnalyze: true,       // Metadata 模式下自动在后台分析新完成的 AI 楼层
+    bgWaitBeforeSend: true,    // 发送前等待未完成的后台分析，保证下一回合看到最新状态
+    bgWaitTimeoutSec: 60,      // 等待上限（秒），超时后照常发送
+    customBgAnalysisPrompt: '', // 后台分析提示词（空 = 内置默认）
     autoParse: true,
     autoFillPrevTimelineOnSend: false, // 发送前自动补全上一条AI消息的时间线（默认关闭，避免静默误写历史）
     injectContext: true,
@@ -302,6 +310,7 @@ const PRESERVED_KEYS_ON_RESET = [
 // 故意排除 API URL/Key/Model、向量召回参数等本地敏感/环境相关字段，避免随卡分享时泄露凭据。
 const _SETTINGS_EXPORT_KEYS = [
     'enabled', 'autoParse', 'autoFillPrevTimelineOnSend', 'injectContext', 'useMainPresetForAiTasks', 'showMessagePanel', 'showTopIcon',
+    'stateMode', 'bgAutoAnalyze', 'bgWaitBeforeSend', 'bgWaitTimeoutSec', 'customBgAnalysisPrompt',
     'injectionDepthSource', 'injectionPosition', 'timelineInjectionMode',
     'sendTimeline', 'contextDepth', 'sendCharacters', 'sendItems',
     'sendLocationMemory', 'sendRelationships', 'sendMood',
@@ -947,6 +956,16 @@ function loadSettings() {
 
     const saved = raw || {};
 
+    // 已有安装（升级到本分支）保持原有内联标签行为，用户可在设置中手动切换
+    if (raw && saved.stateMode === undefined) {
+        settings.stateMode = 'legacy';
+        changed = true;
+    }
+    if (settings.stateMode !== 'metadata' && settings.stateMode !== 'legacy') {
+        settings.stateMode = 'legacy';
+        changed = true;
+    }
+
     if (!settings._autoFillPrevTimelineDefaultOffMigrated) {
         settings.autoFillPrevTimelineOnSend = false;
         settings._autoFillPrevTimelineDefaultOffMigrated = true;
@@ -1495,6 +1514,14 @@ function _publishHoraeApi() {
         getRpgState: (skipLast) => horaeManager.getRpgStateAt(skipLast),
         getEvents: (limit, filterLevel) => horaeManager.getEvents(limit, filterLevel),
         getChat: () => horaeManager.getChat(),
+        getStateMode: () => (_isMetadataMode() ? 'metadata' : 'legacy'),
+        // Background / Metadata Only 模式的后台分析状态（只读查询 + 手动重分析）
+        background: Object.freeze({
+            getStatus: (messageIndex) => _bgGetDisplayState(messageIndex),
+            isBusy: () => bgAnalyzer.hasPending(_bgChatKey()),
+            waitForIdle: (timeoutMs = 60000) => bgAnalyzer.waitForIdle(timeoutMs, _bgChatKey()),
+            reanalyze: (messageIndex) => bgReanalyzeMessage(messageIndex),
+        }),
         registerPort: registerHoraePort,
         unregisterPort: unregisterHoraePort,
         getPorts: () => [...horaePorts.values()].map(port => Object.freeze({
@@ -9386,6 +9413,19 @@ function commitRpgEdit(messageIndex, charName, fieldType, payload) {
         default: return false;
     }
 
+    if (_isMetadataMode()) {
+        // 记录手动修改，后台重新分析该楼层时叠加回去，避免手动编辑被覆盖
+        const manual = mes.horae_meta._manualRpgEdits || (mes.horae_meta._manualRpgEdits = {});
+        if (fieldType === 'bar') {
+            if (!manual.bars) manual.bars = {};
+            manual.bars[charName] = { ...(manual.bars[charName] || {}), [payload.key]: ch.bars[charName][payload.key] };
+        } else {
+            const key = fieldType === 'status' ? 'status' : fieldType === 'level' ? 'levels' : 'xp';
+            if (!manual[key]) manual[key] = {};
+            manual[key][charName] = ch[key][charName];
+        }
+    }
+
     horaeManager.rebuildRpgData();
     injectHoraeRpgLinePatch(messageIndex, _buildRpgLinePatchForEdit(charName, fieldType, payload));
     getContext().saveChat();
@@ -9690,6 +9730,19 @@ function _matchPresentChars(present, rpg) {
 }
 
 /** 为单个消息面板渲染 RPG HUD（简易状态条） */
+/**
+ * HUD 显示的在场角色。旧版模式下主模型每回合都写 characters，取本楼层即可；
+ * Metadata Only 模式只在在场名单变化时记录，因此回退到截至本楼层的最新在场名单（仅影响显示）。
+ */
+function _hudPresentChars(messageIndex) {
+    const meta = horaeManager.getMessageMeta(messageIndex);
+    const own = meta?.scene?.characters_present || [];
+    if (own.length > 0 || !_isMetadataMode()) return own;
+    const chat = horaeManager.getChat();
+    const skip = Math.max(0, (chat?.length || 0) - messageIndex - 1);
+    return horaeManager.getLatestState(skip)?.scene?.characters_present || [];
+}
+
 function renderRpgHud(messageEl, messageIndex) {
     const old = messageEl.querySelector('.horae-rpg-hud');
     if (old) old.remove();
@@ -9702,8 +9755,7 @@ function renderRpgHud(messageEl, messageIndex) {
     const _hCfgs = _hChat?.[0]?.horae_meta?._rpgConfigs;
     if (!rpg.currencyConfig) rpg.currencyConfig = _hCfgs?.currencyConfig || _hChat?.[0]?.horae_meta?.rpg?.currencyConfig || { denominations: [] };
 
-    const meta = horaeManager.getMessageMeta(messageIndex);
-    const present = meta?.scene?.characters_present || [];
+    const present = _hudPresentChars(messageIndex);
     if (present.length === 0) return;
 
     let chars = _matchPresentChars(present, rpg);
@@ -9821,8 +9873,7 @@ function _renderRpgHudFromSnapshot(messageEl, messageIndex, rpg) {
     if (old) old.remove();
     if (!rpg) return;
 
-    const meta = horaeManager.getMessageMeta(messageIndex);
-    const present = meta?.scene?.characters_present || [];
+    const present = _hudPresentChars(messageIndex);
     if (present.length === 0) return;
 
     let chars = _matchPresentChars(present, rpg);
@@ -11618,6 +11669,7 @@ function addMessagePanel(messageEl, messageIndex) {
                     <i class="fa-regular ${isSkipped ? 'fa-eye-slash' : 'fa-clock'}"></i>
                 </div>
                 <div class="horae-panel-summary">
+                    ${_bgStatusBadgeHtml(messageIndex)}
                     ${isSkipped ? `<span class="horae-sideplay-badge">${t('badge.sideplay')}</span>` : ''}
                     <span class="horae-summary-time">${isSkipped ? t('badge.noTracking') : time}</span>
                     <span class="horae-summary-divider">|</span>
@@ -11943,6 +11995,11 @@ function bindPanelEvents(panelEl) {
 
         toggleEl?.addEventListener('click', (e) => {
             if (e.target.closest('.horae-btn-ai-analyze-header') || e.target.closest('.horae-btn-rescan') || e.target.closest('.horae-btn-sideplay')) return;
+            if (e.target.closest('.horae-bg-status')) {
+                e.stopPropagation();
+                _bgOnStatusBadgeClick(messageId);
+                return;
+            }
             togglePanel();
         });
         headerAnalyzeBtn?.addEventListener('click', (e) => {
@@ -12088,6 +12145,11 @@ function bindPanelEvents(panelEl) {
 
     // 快速解析按钮（不消耗API）
     panelEl.querySelector('.horae-btn-quick-scan')?.addEventListener('click', async () => {
+        // Metadata Only：不对剧情正文做宽松解析，改为后台分析
+        if (_isMetadataMode()) {
+            bgReanalyzeMessage(messageId);
+            return;
+        }
         const chat = horaeManager.getChat();
         const message = chat[messageId];
         if (!message) {
@@ -12146,6 +12208,17 @@ function bindPanelEvents(panelEl) {
     });
 }
 
+/** 点击后台分析状态标记：失败/过期/未分析时直接重试，已同步时确认后重新分析 */
+function _bgOnStatusBadgeClick(messageId) {
+    const state = _bgGetDisplayState(messageId);
+    if (state === 'running' || state === 'queued') {
+        showToast(t('ui.analyzing'), 'info');
+        return;
+    }
+    if ((state === 'synced' || state === 'nochange') && !confirm(t('confirm.reanalyzeMessage'))) return;
+    bgReanalyzeMessage(messageId);
+}
+
 async function handlePanelAiAnalyzeAction(messageId, panelEl) {
     if (_panelAiAnalyzeInProgress) {
         showToast(t('ui.analyzing'), 'info');
@@ -12168,6 +12241,12 @@ async function handlePanelAiAnalyzeAction(messageId, panelEl) {
         existingMeta?.items && Object.keys(existingMeta.items).length > 0
     );
     if (hasExistingData && !confirm(t('confirm.reanalyzeMessage'))) return;
+
+    if (_isMetadataMode()) {
+        // 走后台分析队列：同样的校验、替换旧增量与失败保护
+        bgReanalyzeMessage(messageId);
+        return;
+    }
 
     await runPanelAiAnalyze(messageId, panelEl, message);
 }
@@ -12314,6 +12393,11 @@ async function toggleSideplay(messageId, panelEl) {
 
 /** 重新扫描消息并更新面板（完全替换） */
 async function rescanMessageMeta(messageId, panelEl) {
+    // Metadata Only：正文里没有标签，「重扫」改为后台重新分析（不会因找不到标签而清空数据）
+    if (_isMetadataMode()) {
+        bgReanalyzeMessage(messageId);
+        return;
+    }
     // 从DOM获取最新的消息内容（用户可能已编辑）
     const messageEl = panelEl.closest('.mes');
     if (!messageEl) {
@@ -12753,8 +12837,13 @@ function buildHoraeEventTagFromMeta(meta) {
     return `<horaeevent>\n${lines.join('\n')}\n</horaeevent>`;
 }
 
-/** 同步注入正文标签 */
+/**
+ * 同步注入正文标签（仅 Legacy 模式）
+ * Metadata Only 模式下不触碰 message.mes：所有调用方都已先把修改写入 horae_meta，
+ * 且该模式下编辑/swipe/重扫不会再从正文重新解析，元数据本身就是唯一持久化来源。
+ */
 function injectHoraeTagToMessage(messageId, meta) {
+    if (_isMetadataMode()) return;
     try {
         const chat = horaeManager.getChat();
         if (!chat?.[messageId]) return;
@@ -12828,6 +12917,8 @@ function _parseRpgLineForMatch(line) {
 /** 把 patch 落到 mes 的 <horaerpg> 块：同实体行原位替换，多余同实体行丢弃，没匹配就追加 */
 function injectHoraeRpgLinePatch(messageId, patch) {
     if (!patch) return;
+    // Metadata Only：HUD 修改已写入 _rpgChanges / _manualRpgEdits，不写正文
+    if (_isMetadataMode()) return;
     try {
         const chat = horaeManager.getChat();
         if (!chat?.[messageId]) return;
@@ -13017,6 +13108,47 @@ function initSettingsEvents() {
     $('#horae-setting-auto-parse').on('change', function () {
         settings.autoParse = this.checked;
         saveSettings();
+    });
+
+    $('#horae-setting-state-mode').on('change', function () {
+        const next = this.value === 'metadata' ? 'metadata' : 'legacy';
+        if (settings.stateMode === next) return;
+        settings.stateMode = next;
+        saveSettings();
+        // 切换模式不清除任何数据；排队中的后台任务在旧版模式下不再需要
+        if (next === 'legacy') bgAnalyzer.reset();
+        _syncStateModeUI();
+        _rerenderAllMessagePanels();
+        showToast(t(next === 'metadata' ? 'bg.toastModeMetadata' : 'bg.toastModeLegacy'), 'info');
+    });
+
+    $('#horae-setting-bg-auto-analyze').on('change', function () {
+        settings.bgAutoAnalyze = this.checked;
+        saveSettings();
+    });
+
+    $('#horae-setting-bg-wait-before-send').on('change', function () {
+        settings.bgWaitBeforeSend = this.checked;
+        saveSettings();
+    });
+
+    $('#horae-setting-bg-wait-timeout').on('change', function () {
+        const v = parseInt(this.value, 10);
+        settings.bgWaitTimeoutSec = Number.isFinite(v) ? Math.max(0, Math.min(600, v)) : 60;
+        this.value = settings.bgWaitTimeoutSec;
+        saveSettings();
+    });
+
+    $('#horae-setting-bg-prompt').on('change', function () {
+        settings.customBgAnalysisPrompt = this.value;
+        saveSettings();
+    });
+
+    $('#horae-btn-bg-prompt-reset').on('click', function () {
+        settings.customBgAnalysisPrompt = '';
+        $('#horae-setting-bg-prompt').val('');
+        saveSettings();
+        showToast(t('toast.saveSuccess'), 'success');
     });
 
     $('#horae-setting-auto-fill-prev-timeline').on('change', function () {
@@ -15804,8 +15936,36 @@ function _syncVectorRecallPresetInputs() {
     $('#horae-setting-vector-fulltext-threshold').val(settings.vectorFullTextThreshold ?? 0.9);
 }
 
+/** 模式相关的设置项显隐 */
+function _syncStateModeUI() {
+    const meta = _isMetadataMode();
+    $('#horae-setting-state-mode').val(meta ? 'metadata' : 'legacy');
+    $('#horae-bg-mode-options').toggle(meta);
+    // 旧版专用选项：在 Metadata 模式下无作用，隐藏以免误解
+    $('#horae-setting-auto-parse').closest('.horae-setting-item').toggle(!meta);
+    $('#horae-setting-auto-fill-prev-timeline').closest('.horae-setting-item').toggle(!meta);
+}
+
+/** 重新渲染所有可见楼层的消息面板（模式切换后刷新状态标记） */
+function _rerenderAllMessagePanels() {
+    document.querySelectorAll('#chat .mes[mesid]').forEach(messageEl => {
+        const messageId = parseInt(messageEl.getAttribute('mesid'), 10);
+        if (Number.isNaN(messageId)) return;
+        const msg = horaeManager.getChat()?.[messageId];
+        if (!msg || msg.is_user || !msg.horae_meta) return;
+        const oldPanel = messageEl.querySelector('.horae-message-panel');
+        if (oldPanel) oldPanel.remove();
+        addMessagePanel(messageEl, messageId);
+    });
+}
+
 function syncSettingsToUI() {
     $('#horae-setting-enabled').prop('checked', settings.enabled);
+    $('#horae-setting-bg-auto-analyze').prop('checked', settings.bgAutoAnalyze !== false);
+    $('#horae-setting-bg-wait-before-send').prop('checked', settings.bgWaitBeforeSend !== false);
+    $('#horae-setting-bg-wait-timeout').val(settings.bgWaitTimeoutSec ?? 60);
+    $('#horae-setting-bg-prompt').val(settings.customBgAnalysisPrompt || '');
+    _syncStateModeUI();
     $('#horae-setting-auto-parse').prop('checked', settings.autoParse);
     $('#horae-setting-auto-fill-prev-timeline').prop('checked', settings.autoFillPrevTimelineOnSend === true);
     $('#horae-setting-inject-context').prop('checked', settings.injectContext);
@@ -16498,7 +16658,11 @@ async function _generateForAuxTask(prompt, opts = {}) {
         ].filter(Boolean).join('、');
         if (!missing) {
             try {
-                return await _enqueueAuxApi(() => generateWithDirectApi(prompt, profile, { kind }));
+                return await _enqueueAuxApi(() => generateWithDirectApi(prompt, profile, {
+                    kind,
+                    timeoutMs: rawOpts.timeoutMs,
+                    temperature: rawOpts.temperature,
+                }));
             } catch (err) {
                 if (forbidFallback || !settings.auxApiFallbackToMain) throw err;
                 console.warn('[Horae] 辅助API失败，回退主API:', err);
@@ -17541,7 +17705,7 @@ async function generateWithDirectApi(prompt, profile = null, opts = {}) {
     const body = {
         model: _model,
         messages,
-        temperature: 0.7,
+        temperature: typeof opts.temperature === 'number' ? opts.temperature : 0.7,
         max_tokens: 4096,
         stream: false
     };
@@ -17558,14 +17722,26 @@ async function generateWithDirectApi(prompt, profile = null, opts = {}) {
         body.safetySettings = blockNone;
     }
     console.log(`[Horae] 独立API请求: ${url}, 模型: ${body.model}`);
-    const resp = await _corsAwareFetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${_apiKey}`
-        },
-        body: JSON.stringify(body)
-    });
+    // 可选超时：后台分析需要可中断，避免挂起的请求长期占住辅助 API 串行队列
+    const abortCtl = opts.timeoutMs > 0 && typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const abortTimer = abortCtl ? setTimeout(() => abortCtl.abort(), opts.timeoutMs) : null;
+    let resp;
+    try {
+        resp = await _corsAwareFetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${_apiKey}`
+            },
+            body: JSON.stringify(body),
+            ...(abortCtl ? { signal: abortCtl.signal } : {}),
+        });
+    } catch (err) {
+        if (err?.name === 'AbortError') throw new Error(`timeout after ${Math.round(opts.timeoutMs / 1000)}s`);
+        throw err;
+    } finally {
+        if (abortTimer) clearTimeout(abortTimer);
+    }
     if (!resp.ok) {
         const errText = await resp.text().catch(() => '');
         const hint = _httpStatusHint(resp.status);
@@ -19596,7 +19772,8 @@ async function createNewChatWithCarryover() {
         }
 
         // 把累积状态完整序列化到 chat[0].mes（含 <horaeevent>），重载时可由解析路径回填
-        try {
+        // Metadata Only 模式下状态只存在 horae_meta 中，不写入正文
+        if (!_isMetadataMode()) try {
             const seedHoraeTag = buildHoraeTagFromMeta(seedMeta);
             const seedEventTag = buildHoraeEventTagFromMeta(seedMeta);
             const combined = [seedHoraeTag, seedEventTag].filter(Boolean).join('\n\n');
@@ -20107,7 +20284,7 @@ async function clearAllData() {
 
 /** AI 辅助生成入口。默认走 generateRaw 并显式带入当前 OAI 预设片段。 */
 async function _generateForAiTasks(prompt, opts = {}) {
-    const { noVectorRecallMarker = false, noContextInjectionMarker = false, kind = 'summary' } = opts;
+    const { noVectorRecallMarker = false, noContextInjectionMarker = false, kind = 'summary', forceRaw = false } = opts;
     const context = getContext();
     const markerLines = [];
     if (noVectorRecallMarker) markerLines.push(_createNoVectorRecallMarker());
@@ -20115,7 +20292,8 @@ async function _generateForAiTasks(prompt, opts = {}) {
     const markerText = markerLines.join('\n');
     const finalPrompt = markerText ? `${markerText}\n${prompt}` : prompt;
 
-    if (settings.useMainPresetForAiTasks && typeof context?.generate === 'function') {
+    // forceRaw：后台分析不得走 generate('quiet')，避免在群聊中触发角色发言或写入聊天记录
+    if (!forceRaw && settings.useMainPresetForAiTasks && typeof context?.generate === 'function') {
         return await context.generate('quiet', {
             quiet_prompt: finalPrompt,
             quietToLoud: false,
@@ -20251,6 +20429,488 @@ function _buildAnalysisContext(state, targetIndex, userName) {
     }
 
     return lines.join('\n');
+}
+
+// ============================================
+// Background / Metadata Only 模式：后台状态分析
+// ============================================
+// 主模型只写剧情；完成的 AI 楼层由辅助模型独立分析，增量只写入该楼层 horae_meta，
+// 绝不回写 message.mes。每个楼层版本（chatKey + 消息对象 + swipe_id + 正文指纹）最多一次有效提交。
+
+function _isMetadataMode() {
+    return settings.stateMode === 'metadata';
+}
+
+/** 当前聊天的唯一键：群聊 id + chat 文件 id；切换聊天后旧任务的结果将被拒绝 */
+function _bgChatKey() {
+    const ctx = getContext();
+    let chatId = '';
+    try { chatId = ctx?.getCurrentChatId?.() || ''; } catch (_) { /* ignore */ }
+    if (!chatId) chatId = _deriveChatId(ctx);
+    return `${ctx?.groupId || ''}::${chatId}`;
+}
+
+const BG_REQUEST_TIMEOUT_MS = 180000;
+let _bgMainGenerating = false;
+
+const bgAnalyzer = new BackgroundAnalyzer({
+    getChat: () => horaeManager.getChat(),
+    getChatKey: _bgChatKey,
+    analyze: (job) => _bgRequestAnalysis(job),
+    parse: (raw) => parseBgResponse(raw, (text) => horaeManager.parseHoraeTag(text)),
+    commit: (job, result) => _bgCommit(job, result),
+    markFailed: (job, reason) => _bgMarkFailed(job, reason),
+    onStatus: (job, state, extra) => _bgOnStatus(job, state, extra),
+    log: (level, ...args) => (console[level] || console.log)('[Horae][BG]', ...args),
+});
+
+function _bgGetDefaultPrompt() {
+    const lang = detectEffectiveAiLang(settings);
+    return (lang === 'zh-CN' || lang === 'zh-TW') ? DEFAULT_BG_PROMPT_ZH : DEFAULT_BG_PROMPT_EN;
+}
+
+function _bgGetPromptTemplate() {
+    const custom = String(settings.customBgAnalysisPrompt || '');
+    return custom.trim() ? custom : _bgGetDefaultPrompt();
+}
+
+/**
+ * 找到目标 AI 楼层之前的 USER 行动。
+ * 若 USER 与目标之间已有其他 AI 楼层（群聊连续发言），该行动视为已结算，只作上下文。
+ */
+function _bgFindUserAction(chat, idx) {
+    let settled = false;
+    for (let i = idx - 1; i >= 0 && i >= idx - 12; i--) {
+        const m = chat[i];
+        if (!m || m.horae_meta?._skipHorae) continue;
+        if (m.is_user) {
+            const text = _stripHoraeAnalysisInput(m.mes || '');
+            return { text: text.length > 2000 ? text.slice(0, 2000) + '…' : text, settled };
+        }
+        if (!m.is_system && String(m.mes || '').trim()) settled = true;
+    }
+    return { text: '', settled };
+}
+
+function _bgBuildPrompt(chat, idx) {
+    const message = chat[idx];
+    const ctx = getContext();
+    const lang = detectEffectiveAiLang(settings);
+    const zh = lang === 'zh-CN' || lang === 'zh-TW';
+    const userName = ctx?.name1 || t('ui.protagonist');
+    const charName = ctx?.name2 || '';
+
+    // 目标楼层之前的状态快照（只读，含 RPG / 物品 / NPC / 表格等），skipLast 截到目标楼层
+    const stateText = horaeManager.generateCompactPrompt(Math.max(0, chat.length - idx), { audience: 'analyzer' });
+
+    const action = _bgFindUserAction(chat, idx);
+    let userBlock;
+    if (!action.text) {
+        userBlock = zh ? '（无）' : '(none)';
+    } else if (action.settled) {
+        userBlock = (zh
+            ? '【已结算：此行动已由更早的回复记录，仅供理解上下文，不得重复记录其造成的变化】\n'
+            : '[ALREADY SETTLED: this action was recorded with an earlier reply; context only, do NOT record its changes again]\n')
+            + action.text;
+    } else {
+        userBlock = action.text;
+    }
+
+    const content = _stripHoraeAnalysisInput(message.mes || '') || String(message.mes || '').trim();
+    const values = {
+        state: stateText || (zh ? '（暂无记录）' : '(nothing recorded yet)'),
+        previoususermessage: userBlock,
+        content,
+        speaker: message.name || charName || '',
+        modules: horaeManager.generateBgModulePrompts(),
+        user: userName,
+        char: charName,
+    };
+
+    // 先替换模板自身的 ${字段行}，再单次替换 {{占位符}}，避免剧情文本里的 $ 或 {{}} 被二次解释
+    let template = _bgGetPromptTemplate();
+    const fieldLines = horaeManager.getPromptFieldLines?.() || {};
+    for (const [key, value] of Object.entries(fieldLines)) {
+        template = template.split('${' + key + '}').join(value);
+    }
+    // modules 内的 {{user}} 先展开，再整体代入
+    values.modules = values.modules.replace(/\{\{user\}\}/gi, () => userName).replace(/\{\{char\}\}/gi, () => charName);
+    return template.replace(/\{\{(state|previousUserMessage|content|speaker|modules|user|char)\}\}/gi,
+        (_m, k) => values[k.toLowerCase()] ?? '');
+}
+
+async function _bgRequestAnalysis(job) {
+    const chat = horaeManager.getChat();
+    const idx = chat.indexOf(job.message);
+    if (idx < 0) throw new Error('message no longer in chat');
+    const prompt = _bgBuildPrompt(chat, idx);
+    console.log(`[Horae][BG] 分析 #${idx} (swipe ${job.swipeId}, fp ${job.fp}, reason ${job.reason})`);
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timeout after ${BG_REQUEST_TIMEOUT_MS / 1000}s`)), BG_REQUEST_TIMEOUT_MS + 5000);
+    });
+    try {
+        const response = await Promise.race([
+            _generateForAuxTask(prompt, {
+                kind: 'analysis',
+                noVectorRecallMarker: true,
+                noContextInjectionMarker: true,
+                forceRaw: true,
+                timeoutMs: BG_REQUEST_TIMEOUT_MS,
+                temperature: 0.3,
+            }),
+            timeout,
+        ]);
+        if (!String(response || '').trim()) throw new Error('empty response');
+        return response;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+/**
+ * 楼层版本缓存（按正文指纹）：swipe 切回已分析过的版本时直接恢复，不重复请求。
+ * 只缓存仍存在于 swipes 中的版本，过期条目随之清理。
+ */
+function _bgCacheSwipeMeta(message, meta = message?.horae_meta) {
+    const marker = meta?._bg;
+    if (!marker?.fp || (marker.status !== BG_STATUS.DONE && marker.status !== BG_STATUS.NO_CHANGE)) return;
+    const texts = Array.isArray(message.swipes) ? [...message.swipes, message.mes] : [message.mes];
+    const live = new Set(texts.map(text => fingerprintText(text)));
+    if (!live.has(marker.fp)) return;
+    const cache = (message.horae_bg_swipes && typeof message.horae_bg_swipes === 'object') ? message.horae_bg_swipes : {};
+    cache[marker.fp] = pickMessageDelta(meta);
+    for (const fp of Object.keys(cache)) {
+        if (!live.has(fp)) delete cache[fp];
+    }
+    message.horae_bg_swipes = cache;
+}
+
+function _bgRebuildAggregates() {
+    horaeManager.rebuildTableData();
+    horaeManager.rebuildRelationships();
+    horaeManager.rebuildLocationMemory();
+    horaeManager.rebuildRpgData();
+}
+
+async function _bgAfterMetaChange(idx, { rebuild = true } = {}) {
+    if (rebuild) _bgRebuildAggregates();
+    await getContext().saveChat();
+    try {
+        refreshAllDisplays();
+        renderCustomTablesList();
+        _snapshotCurrentChatMessageRefs();
+    } catch (err) {
+        console.warn('[Horae][BG] 刷新显示失败:', err);
+    }
+    _bgRerenderPanel(idx);
+    if (settings.vectorEnabled && vectorManager.isReady) {
+        const meta = horaeManager.getMessageMeta(idx);
+        const doc = meta ? vectorManager.buildVectorDocument(meta) : '';
+        const op = doc ? vectorManager.addMessage(idx, meta) : vectorManager.removeMessage(idx);
+        Promise.resolve(op)
+            .then(() => _updateVectorStatus())
+            .catch(err => console.warn('[Horae][BG] 向量索引更新失败:', err));
+    }
+}
+
+/** 提交校验通过的分析结果：替换该楼层旧增量（不叠加），写分析标记，重建聚合并保存 */
+async function _bgCommit(job, result) {
+    const chat = horaeManager.getChat();
+    const idx = chat.indexOf(job.message);
+    if (idx < 0) throw new Error('message vanished before commit');
+    const message = job.message;
+
+    // 旧数据快照：提交过程中任何异常都恢复原状，避免 chat[0] 聚合被部分写坏
+    const backupMeta = message.horae_meta ? JSON.parse(JSON.stringify(message.horae_meta)) : null;
+    const backupFirst = idx !== 0 && chat[0]?.horae_meta ? JSON.parse(JSON.stringify(chat[0].horae_meta)) : null;
+
+    // 被替换的若是另一个已分析的 swipe 版本，先缓存，切回时可直接恢复
+    if (backupMeta?._bg?.fp && backupMeta._bg.fp !== job.fp) _bgCacheSwipeMeta(message, backupMeta);
+
+    let outcome;
+    try {
+        outcome = applyAnalysisResult(horaeManager, idx, result, job, {
+            preserve: (oldMeta, i) => {
+                const savedFlags = _saveCompressedFlags(oldMeta);
+                // 开场白楼层同时承载整个聊天的数据（RPG 聚合、摘要、表格、用户待办……），全部保留
+                const savedChatWide = i === 0 ? saveChatWideMeta(oldMeta) : null;
+                return (meta) => {
+                    _restoreCompressedFlags(meta, savedFlags);
+                    if (savedChatWide) restoreChatWideMeta(meta, savedChatWide);
+                };
+            },
+        });
+        // 多版本楼层才需要缓存；单版本楼层在 swipe 离开时再缓存
+        if (Array.isArray(message.swipes) && message.swipes.length > 1) _bgCacheSwipeMeta(message);
+    } catch (err) {
+        message.horae_meta = backupMeta;
+        if (backupFirst && chat[0]) chat[0].horae_meta = backupFirst;
+        try { _bgRebuildAggregates(); } catch (_) { /* ignore */ }
+        throw err;
+    }
+    await _bgAfterMetaChange(idx, { rebuild: false });
+    console.log(`[Horae][BG] #${idx} 提交完成: ${result.kind === 'changes' ? '有变化' : '无变化'}${outcome.rebuilt ? '（已重放聚合）' : ''}`);
+}
+
+/** 失败：只写失败标记（旧的有效状态保持不变），可重试 */
+async function _bgMarkFailed(job, reason) {
+    if (!bgAnalyzer.isJobCurrent(job)) return;
+    const message = job.message;
+    if (!message.horae_meta) message.horae_meta = createEmptyMeta();
+    message.horae_meta._bg = {
+        v: BG_MARKER_VERSION,
+        status: BG_STATUS.FAILED,
+        fp: job.fp,
+        swipeId: job.swipeId,
+        at: new Date().toISOString(),
+        error: String(reason || 'unknown').slice(0, 300),
+    };
+    try { await getContext().saveChat(); } catch (err) { console.warn('[Horae][BG] 保存失败标记失败:', err); }
+}
+
+function _bgOnStatus(job, state, extra) {
+    const idx = bgAnalyzer.indexOfJob(job);
+    if (idx >= 0) _bgUpdateStatusBadge(idx);
+    if (state === 'failed') {
+        const reason = extra?.reason || '';
+        console.warn(`[Horae][BG] #${idx} 分析失败: ${reason}`);
+        if (idx >= 0) showToast(t('bg.toastFailed', { id: idx, error: reason }), 'error');
+    }
+}
+
+/** 计算楼层的后台分析显示状态 */
+function _bgGetDisplayState(messageIndex) {
+    const chat = horaeManager.getChat();
+    const message = chat?.[messageIndex];
+    if (!message || message.is_user) return null;
+    if (message.horae_meta?._skipHorae) return null;
+    const runtime = bgAnalyzer.getRuntimeState(message);
+    if (runtime === 'running') return 'running';
+    if (runtime === 'queued') return 'queued';
+    const marker = getBgMarker(message);
+    if (!marker) return 'none';
+    if (marker.status === BG_STATUS.FAILED) return 'failed';
+    if (marker.fp !== fingerprintText(message.mes)) return 'outdated';
+    return marker.status === BG_STATUS.NO_CHANGE ? 'nochange' : 'synced';
+}
+
+function _bgStatusLabel(state) {
+    const icons = {
+        synced: 'fa-circle-check', nochange: 'fa-circle-check', running: 'fa-spinner fa-spin',
+        queued: 'fa-hourglass-half', failed: 'fa-triangle-exclamation', outdated: 'fa-rotate', none: 'fa-circle-question',
+    };
+    return `<i class="fa-solid ${icons[state] || 'fa-circle'}"></i> ${escapeHtml(t(`bg.state.${state}`))}`;
+}
+
+function _bgStatusTitle(messageIndex, state) {
+    const marker = getBgMarker(horaeManager.getChat()?.[messageIndex]);
+    let title = t(`bg.stateHint.${state}`);
+    if (state === 'failed' && marker?.error) title += `\n${marker.error}`;
+    return title;
+}
+
+function _bgStatusBadgeHtml(messageIndex) {
+    if (!_isMetadataMode()) return '';
+    const state = _bgGetDisplayState(messageIndex);
+    if (!state) return '';
+    return `<span class="horae-bg-status" data-state="${state}" title="${escapeHtml(_bgStatusTitle(messageIndex, state))}">${_bgStatusLabel(state)}</span>`;
+}
+
+function _bgUpdateStatusBadge(messageIndex) {
+    try {
+        const messageEl = document.querySelector(`.mes[mesid="${messageIndex}"]`);
+        if (!messageEl) return;
+        const el = messageEl.querySelector('.horae-bg-status');
+        if (!el) {
+            // 新楼层可能还没有面板
+            if (!messageEl.querySelector('.horae-message-panel')) _bgRerenderPanel(messageIndex);
+            return;
+        }
+        const state = _bgGetDisplayState(messageIndex);
+        if (!state) { el.remove(); return; }
+        el.dataset.state = state;
+        el.innerHTML = _bgStatusLabel(state);
+        el.title = _bgStatusTitle(messageIndex, state);
+    } catch (err) {
+        console.warn('[Horae][BG] 更新状态标记失败:', err);
+    }
+}
+
+function _bgRerenderPanel(messageIndex) {
+    try {
+        const messageEl = document.querySelector(`.mes[mesid="${messageIndex}"]`);
+        if (!messageEl) return;
+        const msg = horaeManager.getChat()?.[messageIndex];
+        if (!msg || msg.is_user) return;
+        if (!msg.horae_meta) msg.horae_meta = createEmptyMeta();
+        const oldPanel = messageEl.querySelector('.horae-message-panel');
+        const wasOpen = oldPanel?.querySelector('.horae-panel-content')?.style.display === 'block';
+        if (oldPanel) oldPanel.remove();
+        addMessagePanel(messageEl, messageIndex);
+        if (wasOpen) {
+            const content = messageEl.querySelector('.horae-message-panel .horae-panel-content');
+            if (content) content.style.display = 'block';
+        }
+        messageEl.classList.add('horae-processed');
+    } catch (err) {
+        console.warn(`[Horae][BG] 面板刷新失败 #${messageIndex}:`, err);
+    }
+}
+
+/**
+ * 手动（重新）分析：复用魔术棒 / 重扫按钮 / 状态标记点击。force 时即使已分析也重新请求。
+ * @returns {boolean} 是否已入队
+ */
+function bgReanalyzeMessage(messageIndex, { force = true } = {}) {
+    const chat = horaeManager.getChat();
+    const message = chat?.[messageIndex];
+    if (!message || message.is_user || !String(message.mes || '').trim()) {
+        showToast(t('toast.cannotGetContent'), 'error');
+        return false;
+    }
+    if (message.horae_meta?._skipHorae) {
+        showToast(t('badge.sideplayMarked'), 'info');
+        return false;
+    }
+    if (!message.horae_meta) message.horae_meta = createEmptyMeta();
+    const queued = bgAnalyzer.schedule(messageIndex, { force, reason: 'manual' });
+    showToast(queued ? t('bg.toastQueued', { id: messageIndex }) : t('ui.analyzing'), 'info');
+    _bgUpdateStatusBadge(messageIndex);
+    return queued;
+}
+
+/** 是否为「新完成」的 AI 楼层：位于最后一条 USER 消息之后（避免历史重渲染引发批量请求） */
+function _bgIsFreshTail(chat, messageId) {
+    for (let i = chat.length - 1; i > messageId; i--) {
+        if (chat[i]?.is_user) return false;
+    }
+    return true;
+}
+
+/** Metadata 模式下 CHARACTER_MESSAGE_RENDERED：不解析正文、不修改 mes，只安排后台分析 */
+async function _bgOnCharacterMessageRendered(messageId, type) {
+    const chat = horaeManager.getChat();
+    const message = chat?.[messageId];
+    if (!message || message.is_user) return;
+    if (!message.horae_meta) message.horae_meta = createEmptyMeta();
+
+    if (!message.horae_meta._skipHorae && settings.bgAutoAnalyze
+        && _bgIsFreshTail(chat, messageId) && !isMessageAnalyzed(message)) {
+        bgAnalyzer.schedule(messageId, { reason: type || 'received' });
+    }
+
+    try {
+        refreshAllDisplays();
+        _snapshotCurrentChatMessageRefs();
+    } catch (err) {
+        console.error('[Horae] refreshAllDisplays 失败:', err);
+    }
+    setTimeout(() => _bgRerenderPanel(messageId), 100);
+
+    const isRegenerate = type === 'swipe' || type === 'regenerate' || type === 'continue';
+    if (!isRegenerate && settings.autoSummaryEnabled && settings.sendTimeline) {
+        setTimeout(() => {
+            if (!_autoSummaryRanThisTurn) checkAutoSummary();
+        }, 1500);
+    }
+}
+
+/** Metadata 模式 swipe：旧版本状态立即失效；切回已分析过的版本直接恢复，否则排队分析 */
+function _bgOnSwipe(messageId) {
+    const chat = horaeManager.getChat();
+    const msg = chat?.[messageId];
+    if (!msg || msg.is_user) return;
+
+    const oldMeta = msg.horae_meta || null;
+    const oldMarker = getBgMarker(msg);
+    const fp = fingerprintText(msg.mes);
+    // 「过界 swipe」：swipe_id 超出 swipes，ST 正在生成新版本，正文仍是旧版本文字
+    const pendingGeneration = Array.isArray(msg.swipes) && getSwipeId(msg) >= msg.swipes.length;
+    // 仍是同一版本（例如事件重复触发）则不做任何事
+    if (!pendingGeneration && oldMarker?.fp === fp && oldMarker.swipeId === getSwipeId(msg)) {
+        _bgUpdateStatusBadge(messageId);
+        return;
+    }
+    // 离开的版本若已分析，缓存起来以便切回时直接恢复
+    if (oldMeta) _bgCacheSwipeMeta(msg, oldMeta);
+    const savedFlags = _saveCompressedFlags(oldMeta);
+    const savedChatWide = messageId === 0 ? saveChatWideMeta(oldMeta) : null;
+    const skip = !!oldMeta?._skipHorae;
+    const cached = pendingGeneration ? null : msg.horae_bg_swipes?.[fp];
+    if (cached?._bg) cached._bg.swipeId = getSwipeId(msg);
+
+    msg.horae_meta = { ...createEmptyMeta(), ...(cached ? JSON.parse(JSON.stringify(cached)) : {}) };
+    _restoreCompressedFlags(msg.horae_meta, savedFlags);
+    if (savedChatWide) restoreChatWideMeta(msg.horae_meta, savedChatWide);
+    if (skip) msg.horae_meta._skipHorae = true;
+
+    _bgAfterMetaChange(messageId, { rebuild: true }).catch(err => console.error('[Horae][BG] swipe 保存失败:', err));
+
+    // 新 swipe 正在生成时正文仍是旧版本，等 CHARACTER_MESSAGE_RENDERED 再分析
+    if (!cached && !skip && !pendingGeneration && settings.bgAutoAnalyze && !_bgMainGenerating && String(msg.mes || '').trim()) {
+        bgAnalyzer.schedule(messageId, { reason: 'swipe' });
+    }
+}
+
+/** Metadata 模式编辑：正文未变则不动；变了则重新分析（成功后替换旧增量，失败则保留旧状态） */
+function _bgOnEdit(messageId) {
+    const chat = horaeManager.getChat();
+    const message = chat?.[messageId];
+    if (!message) return;
+    if (message.is_user) {
+        // USER 行动被修改：已分析过的下一条 AI 楼层需要按新行动重算
+        if (!settings.bgAutoAnalyze) return;
+        for (let i = messageId + 1; i < chat.length; i++) {
+            const m = chat[i];
+            if (!m || m.is_system) continue;
+            if (!m.is_user && getBgMarker(m)) bgAnalyzer.schedule(i, { force: true, reason: 'user-edit' });
+            break;
+        }
+        return;
+    }
+    const marker = getBgMarker(message);
+    if (marker && marker.fp === fingerprintText(message.mes) && marker.status !== BG_STATUS.FAILED) {
+        _bgUpdateStatusBadge(messageId);
+        return;
+    }
+    if (!message.horae_meta) message.horae_meta = createEmptyMeta();
+    if (settings.bgAutoAnalyze && !message.horae_meta._skipHorae) {
+        bgAnalyzer.schedule(messageId, { reason: 'edit' });
+    }
+    _bgRerenderPanel(messageId);
+}
+
+/**
+ * 打开聊天时续上被中断的分析（切换聊天/刷新时正在分析的楼层）。
+ * 只看最后一条 USER 之后的 AI 楼层，且仅限已在 Metadata 模式下分析过的聊天中、尚无任何状态的楼层，
+ * 因此旧版聊天与历史楼层不会引发批量请求。
+ */
+function _bgResumeInterrupted() {
+    if (!_isMetadataMode() || !settings.enabled || !settings.bgAutoAnalyze) return;
+    const chat = horaeManager.getChat();
+    if (!chat?.length || !chat.some(m => getBgMarker(m))) return;
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const m = chat[i];
+        if (!m || m.is_user) break;
+        if (m.is_system || m.horae_meta?._skipHorae || getBgMarker(m) || metaHasState(m.horae_meta)) continue;
+        bgAnalyzer.schedule(i, { reason: 'resume' });
+    }
+}
+
+/** 发送前等待：保证下一回合注入的是已提交的最新状态；有超时，不会死锁 */
+async function _bgWaitBeforeSend() {
+    if (!settings.bgWaitBeforeSend) return;
+    const chatKey = _bgChatKey();
+    if (!bgAnalyzer.hasPending(chatKey)) return;
+    const timeoutSec = Math.max(0, Math.min(600, parseInt(settings.bgWaitTimeoutSec, 10) || 60));
+    console.log(`[Horae][BG] 发送前等待后台分析完成（上限 ${timeoutSec}s）`);
+    showToast(t('bg.toastWaiting'), 'info');
+    const ok = await bgAnalyzer.waitForIdle(timeoutSec * 1000, chatKey);
+    if (!ok) {
+        console.warn('[Horae][BG] 等待后台分析超时，按当前已提交状态继续发送');
+        showToast(t('bg.toastWaitTimeout'), 'warning');
+    }
 }
 
 /**
@@ -20389,8 +21049,14 @@ function _sanitizeThinkBlockHoraeTags(mes) {
 /**
  * AI回复接收时触发
  */
-async function onMessageReceived(messageId) {
-    if (!settings.enabled || !settings.autoParse) return;
+async function onMessageReceived(messageId, type) {
+    if (!settings.enabled) return;
+    if (_isMetadataMode()) {
+        _autoSummaryRanThisTurn = false;
+        _bgMainGenerating = false;
+        return _bgOnCharacterMessageRendered(messageId, type);
+    }
+    if (!settings.autoParse) return;
     _autoSummaryRanThisTurn = false;
 
     let isRegenerate = false;
@@ -20524,6 +21190,13 @@ async function onMessageDeleted(reportedChatLength = null) {
  */
 function onMessageEdited(messageId) {
     if (!settings.enabled) return;
+    if (_isMetadataMode()) {
+        setTimeout(() => {
+            try { _bgOnEdit(messageId); }
+            catch (err) { console.error(`[Horae] onMessageEdited(metadata) #${messageId} 失败:`, err); }
+        }, 200);
+        return;
+    }
 
     setTimeout(() => {
         try {
@@ -20930,8 +21603,13 @@ async function onPromptReady(eventData) {
     try {
         const chat = horaeManager.getChat();
 
-        // 发送前：可选补全上一条AI楼层的时间线
-        await _autoFillPreviousAiTimelineBeforeInjection(chat);
+        if (_isMetadataMode()) {
+            // Metadata Only：不补写历史正文；只等待尚未提交的后台分析，保证注入最新状态
+            await _bgWaitBeforeSend();
+        } else {
+            // 发送前：可选补全上一条AI楼层的时间线
+            await _autoFillPreviousAiTimelineBeforeInjection(chat);
+        }
 
         // swipe/regenerate检测
         let skipLast = 0;
@@ -20992,7 +21670,8 @@ async function onPromptReady(eventData) {
         const rulesPrompt = horaeManager.generateSystemPromptAddition();
 
         let antiParaRef = '';
-        if (settings.antiParaphraseMode && chat?.length) {
+        // 反转述引用块要求主模型输出 <horae>，Metadata Only 模式下不注入
+        if (settings.antiParaphraseMode && !_isMetadataMode() && chat?.length) {
             for (let i = chat.length - 1; i >= 0; i--) {
                 const m = chat[i];
                 if (!m?.is_user || !m.mes) continue;
@@ -21012,9 +21691,9 @@ async function onPromptReady(eventData) {
         }
 
         // antiParaRef 紧贴 rulesPrompt 末尾，让 AI 把"上一条 USER 消息"和"反转述规则"看在一起
-        const combinedPrompt = recallPrompt
-            ? `${dataPrompt}\n${recallPrompt}\n${rulesPrompt}${antiParaRef}`
-            : `${dataPrompt}\n${rulesPrompt}${antiParaRef}`;
+        // Metadata Only 模式下 rulesPrompt 为空，不留多余空行
+        const tailPrompt = `${rulesPrompt}${antiParaRef}`;
+        const combinedPrompt = [dataPrompt, recallPrompt, tailPrompt].filter((part, i) => i === 0 || part).join('\n');
         const positionRaw = parseInt(settings.injectionPosition, 10);
         const position = Number.isNaN(positionRaw) ? 1 : Math.max(0, positionRaw);
         const depthSource = settings.injectionDepthSource === 'preset' ? 'preset' : 'system';
@@ -21110,6 +21789,8 @@ function _rebuildGlobalDataForCurrentChat() {
  * 聊天切换时触发
  */
 async function onChatChanged() {
+    // 切换聊天：丢弃排队中的后台分析；运行中的任务会在提交前因 chatKey 不符被拒绝
+    bgAnalyzer.reset();
     if (!settings.enabled) return;
     _chatFullyLoaded = false;
     _rpgHudExpandedMsgs.clear();
@@ -21231,6 +21912,7 @@ async function onChatChanged() {
             }, 1500);
             // 跟 pending-scan / cardprofile 错开，避免多个弹窗叠在一起
             setTimeout(() => _maybeSuggestCustomCalendar(), 2400);
+            _bgResumeInterrupted();
         } catch (err) {
             console.error('[Horae] onChatChanged 面板渲染失败:', err);
         }
@@ -21245,7 +21927,8 @@ function onMessageRendered(messageId) {
         try {
             const messageEl = document.querySelector(`.mes[mesid="${messageId}"]`);
             if (!messageEl) return;
-            _sanitizeLeakedHoraeTags(messageEl);
+            // 仅旧模式需要清理泄露标签的显示；Metadata 模式原样显示正文
+            if (!_isMetadataMode()) _sanitizeLeakedHoraeTags(messageEl);
             const msg = horaeManager.getChat()[messageId];
             if (msg && !msg.is_user && settings.showMessagePanel) {
                 addMessagePanel(messageEl, messageId);
@@ -21287,6 +21970,19 @@ function _sanitizeLeakedHoraeTags(messageEl) {
 /** swipe切换分页时触发 — 重置meta、重新解析并刷新所有显示 */
 function onSwipePanel(messageId) {
     if (!settings.enabled) return;
+    if (_isMetadataMode()) {
+        // 立即缓存离开的版本：新 swipe 可能在下面的延迟处理之前就生成并分析完
+        try {
+            const msg = horaeManager.getChat()?.[messageId];
+            if (msg?.horae_meta) _bgCacheSwipeMeta(msg);
+        } catch (err) { console.warn('[Horae][BG] swipe 缓存失败:', err); }
+        // 不从正文重新解析（正文里没有也不该有状态标签）
+        setTimeout(() => {
+            try { _bgOnSwipe(messageId); }
+            catch (err) { console.error(`[Horae] onSwipePanel(metadata) #${messageId} 失败:`, err); }
+        }, 150);
+        return;
+    }
 
     setTimeout(() => {
         try {
@@ -21527,6 +22223,15 @@ jQuery(async () => {
     eventSource.on(event_types.MESSAGE_SWIPED, onSwipePanel);
     eventSource.on(event_types.MESSAGE_DELETED, onMessageDeleted);
     eventSource.on(event_types.MESSAGE_EDITED, onMessageEdited);
+
+    // 记录主生成是否进行中：新 swipe 生成期间不分析占位正文
+    eventSource.on(event_types.GENERATION_STARTED, (type, _params, dryRun) => {
+        if (!dryRun && type !== 'quiet') _bgMainGenerating = true;
+    });
+    eventSource.on(event_types.GENERATION_ENDED, () => { _bgMainGenerating = false; });
+    if (event_types.GENERATION_STOPPED) {
+        eventSource.on(event_types.GENERATION_STOPPED, () => { _bgMainGenerating = false; });
+    }
 
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, () => {
         TavernHelper.injectPrompts([

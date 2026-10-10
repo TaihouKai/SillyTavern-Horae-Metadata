@@ -1,0 +1,560 @@
+/**
+ * Horae - 后台状态分析（Background / Metadata Only 模式）
+ *
+ * 职责：
+ *  - 为「已完成的 AI 楼层」安排独立的后台分析任务（串行、按楼层顺序）
+ *  - 以 chatKey + 消息对象 + swipe_id + 正文指纹 标识任务，提交前再次校验，丢弃过期结果
+ *  - 严格解析辅助模型的私有输出（不做宽松解析）
+ *  - 在 horae_meta._bg 中记录可校验的「已分析」标记（含无变化结果）
+ *
+ * 本模块不直接依赖 SillyTavern，所有副作用通过 deps 注入，便于单元测试。
+ */
+
+import { createEmptyMeta } from './horaeManager.js';
+
+export const BG_MARKER_VERSION = 1;
+
+export const BG_STATUS = Object.freeze({
+    DONE: 'done',          // 已分析，有状态变化
+    NO_CHANGE: 'nochange', // 已分析，无状态变化
+    FAILED: 'failed',      // 分析失败，可重试
+});
+
+/** 32 位 FNV-1a，输出 `长度:哈希` 形式，足以区分同一楼层的不同版本 */
+export function fingerprintText(text) {
+    const s = String(text ?? '');
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return `${s.length}:${h.toString(16).padStart(8, '0')}`;
+}
+
+/** 楼层的 swipe 版本标识；无 swipe 的消息统一为 0 */
+export function getSwipeId(message) {
+    const id = message?.swipe_id;
+    return typeof id === 'number' && Number.isFinite(id) ? id : 0;
+}
+
+/** 读取持久化的分析标记 */
+export function getBgMarker(message) {
+    const m = message?.horae_meta?._bg;
+    return m && typeof m === 'object' ? m : null;
+}
+
+/** 当前正文是否已被成功分析（含「无变化」） */
+export function isMessageAnalyzed(message) {
+    const m = getBgMarker(message);
+    if (!m) return false;
+    if (m.status !== BG_STATUS.DONE && m.status !== BG_STATUS.NO_CHANGE) return false;
+    return m.fp === fingerprintText(message?.mes);
+}
+
+const NO_CHANGE_RE = /<horae[_-]?nochange\s*\/?>|<horae[_-]?nochange>\s*<\/horae[_-]?nochange>/i;
+const ANY_HORAE_BLOCK_RE = /<horae(?:event|rpg|table[:：][^>]*)?>[\s\S]*?<\/horae(?:event|rpg|table(?:[:：][^>]*)?)?>/i;
+
+/** 解析结果里是否真的含有状态数据 */
+export function hasMeaningfulParsed(parsed) {
+    if (!parsed) return false;
+    const nonEmptyObj = (o) => !!o && typeof o === 'object' && Object.keys(o).length > 0;
+    const nonEmptyArr = (a) => Array.isArray(a) && a.length > 0;
+    if (parsed.timestamp?.story_date || parsed.timestamp?.story_time) return true;
+    const sc = parsed.scene || {};
+    if (sc.location || sc.atmosphere || sc.scene_desc || nonEmptyArr(sc.characters_present)) return true;
+    if (nonEmptyObj(parsed.costumes) || nonEmptyObj(parsed.items) || nonEmptyArr(parsed.deletedItems)) return true;
+    if (nonEmptyArr(parsed.events) || parsed.event) return true;
+    if (nonEmptyObj(parsed.affection) || nonEmptyObj(parsed.npcs)) return true;
+    if (nonEmptyArr(parsed.agenda) || nonEmptyArr(parsed.deletedAgenda)) return true;
+    if (nonEmptyObj(parsed.mood) || nonEmptyArr(parsed.relationships)) return true;
+    if (nonEmptyArr(parsed.tableUpdates)) return true;
+    const r = parsed.rpg;
+    if (r) {
+        if (nonEmptyObj(r.bars) || nonEmptyObj(r.status) || nonEmptyArr(r.skills) || nonEmptyArr(r.removedSkills)) return true;
+        if (nonEmptyObj(r.attributes) || nonEmptyObj(r.reputation) || nonEmptyArr(r.equipment) || nonEmptyArr(r.unequip)) return true;
+        if (nonEmptyObj(r.levels) || nonEmptyObj(r.xp) || nonEmptyArr(r.currency) || nonEmptyArr(r.baseChanges)) return true;
+    }
+    return false;
+}
+
+/**
+ * 严格解析辅助模型的私有响应
+ * @returns {{kind:'changes', parsed:object} | {kind:'nochange'} | {kind:'invalid', reason:string}}
+ */
+export function parseBgResponse(raw, parseTag) {
+    if (raw == null) return { kind: 'invalid', reason: 'empty response' };
+    let text = String(raw);
+    // 思维链不参与解析
+    text = text.replace(/<think(?:ing)?[\s>][\s\S]*?<\/think(?:ing)?>/gi, '').trim();
+    if (!text) return { kind: 'invalid', reason: 'empty response' };
+
+    const hasBlock = ANY_HORAE_BLOCK_RE.test(text);
+    const hasNoChange = NO_CHANGE_RE.test(text);
+    if (!hasBlock) {
+        if (hasNoChange) return { kind: 'nochange' };
+        return { kind: 'invalid', reason: 'no <horae>/<horaeevent>/<horaerpg>/<horaetable> block or <horaenochange/> marker' };
+    }
+
+    let parsed = null;
+    try {
+        parsed = parseTag(text);
+    } catch (err) {
+        return { kind: 'invalid', reason: `parse error: ${err?.message || err}` };
+    }
+    if (!parsed) return { kind: 'invalid', reason: 'unparseable tag content' };
+    if (!hasMeaningfulParsed(parsed)) return { kind: 'nochange' };
+    return { kind: 'changes', parsed };
+}
+
+/**
+ * 楼层自身的状态增量字段（每次分析整体替换）。chat[0] 上其余字段（rpg 聚合、摘要、表格、用户待办、
+ * 关系聚合等）属于整个聊天，重新分析开场白 / 切换开场白 swipe 时必须原样保留。
+ */
+export const MESSAGE_DELTA_KEYS = Object.freeze([
+    'timestamp', 'scene', 'costumes', 'items', 'deletedItems', 'deletedAgenda', 'events', 'affection',
+    'npcs', 'agenda', 'mood', 'relationships', '_rpgChanges', 'tableContributions', '_manualRpgEdits',
+    '_bg', '_aiScanned', '_skipHorae',
+]);
+
+/** 只保留楼层增量字段的副本（用于 swipe 版本缓存，避免缓存 chat[0] 的全局数据） */
+export function pickMessageDelta(meta) {
+    const out = {};
+    if (!meta) return out;
+    for (const key of MESSAGE_DELTA_KEYS) {
+        if (meta[key] !== undefined) out[key] = JSON.parse(JSON.stringify(meta[key]));
+    }
+    return out;
+}
+
+/** 保存 chat[0] 上属于整个聊天的数据（非增量字段 + 用户待办 + 关系聚合 + 物品） */
+export function saveChatWideMeta(meta) {
+    if (!meta) return null;
+    const saved = { rest: {}, userAgenda: [], items: null, relationships: null };
+    for (const [key, value] of Object.entries(meta)) {
+        if (!MESSAGE_DELTA_KEYS.includes(key)) saved.rest[key] = value;
+    }
+    saved.userAgenda = (meta.agenda || []).filter(a => a && a.source !== 'ai');
+    saved.items = meta.items ? { ...meta.items } : null;
+    saved.relationships = meta.relationships || null;
+    return saved;
+}
+
+/** 恢复 chat[0] 的聊天级数据：非增量字段原样放回；用户待办与新分析的待办合并；物品不因重新分析丢失 */
+export function restoreChatWideMeta(meta, saved) {
+    if (!meta || !saved) return;
+    for (const [key, value] of Object.entries(saved.rest)) meta[key] = value;
+    if (saved.userAgenda.length) {
+        const fresh = (meta.agenda || []).filter(a => !saved.userAgenda.some(u => u.text === a.text));
+        meta.agenda = [...saved.userAgenda, ...fresh];
+    }
+    if (saved.items) meta.items = { ...saved.items, ...(meta.items || {}) };
+    if (saved.relationships) meta.relationships = saved.relationships;
+}
+
+/** 楼层元数据中是否已有可撤销的状态增量 */
+export function metaHasState(meta) {
+    if (!meta) return false;
+    return !!(meta.timestamp?.story_date || meta.scene?.location || meta.scene?.characters_present?.length
+        || Object.keys(meta.items || {}).length || (meta.deletedItems || []).length
+        || Object.keys(meta.costumes || {}).length || Object.keys(meta.affection || {}).length
+        || Object.keys(meta.npcs || {}).length || (meta.events || []).length
+        || (meta.agenda || []).length || (meta.deletedAgenda || []).length || (meta.relationships || []).length
+        || Object.keys(meta.mood || {}).length || meta._rpgChanges || meta.tableContributions);
+}
+
+/** 把 HUD 手动修改（_manualRpgEdits）叠加回 _rpgChanges，手动值优先 */
+export function overlayManualRpg(meta) {
+    const manual = meta?._manualRpgEdits;
+    if (!manual) return;
+    if (!meta._rpgChanges) meta._rpgChanges = {};
+    const ch = meta._rpgChanges;
+    for (const key of ['bars', 'status', 'levels', 'xp']) {
+        if (!manual[key]) continue;
+        if (!ch[key]) ch[key] = {};
+        for (const [owner, val] of Object.entries(manual[key])) {
+            if (key === 'bars') ch.bars[owner] = { ...(ch.bars[owner] || {}), ...val };
+            else ch[key][owner] = val;
+        }
+    }
+}
+
+/**
+ * 把一次分析结果提交到楼层 idx：替换该楼层旧增量（不叠加）→ 复用 applyParsedToMessage 合并 →
+ * 写分析标记 → 必要时从全部楼层重放聚合数据。不触碰 message.mes。
+ *
+ * @param manager horaeManager
+ * @param {{kind:'changes'|'nochange', parsed?:object}} result
+ * @param {{fp:string, swipeId:number}} job
+ * @param {{preserve?: (oldMeta, idx) => ((newMeta) => void)}} hooks 保留摘要压缩标记 / chat[0] 全局数据等
+ * @returns {{meta:object, rebuilt:boolean}}
+ */
+export function applyAnalysisResult(manager, idx, result, job, hooks = {}) {
+    const chat = manager.getChat();
+    const message = chat[idx];
+    const oldMeta = message.horae_meta || null;
+    const replacing = metaHasState(oldMeta) || !!getBgMarker(message);
+    const isTail = idx === chat.length - 1;
+    const restore = hooks.preserve ? hooks.preserve(oldMeta, idx) : null;
+    const manualRpg = oldMeta?._manualRpgEdits ? JSON.parse(JSON.stringify(oldMeta._manualRpgEdits)) : null;
+
+    message.horae_meta = createEmptyMeta();
+    if (result.kind === 'changes') manager.applyParsedToMessage(idx, result.parsed);
+    const meta = message.horae_meta;
+    if (restore) restore(meta);
+    if (manualRpg) {
+        meta._manualRpgEdits = manualRpg;
+        overlayManualRpg(meta);
+    }
+    if (!meta.timestamp.absolute) meta.timestamp.absolute = new Date().toISOString();
+    meta._bg = {
+        v: BG_MARKER_VERSION,
+        status: result.kind === 'changes' ? BG_STATUS.DONE : BG_STATUS.NO_CHANGE,
+        fp: job.fp,
+        swipeId: job.swipeId,
+        at: new Date().toISOString(),
+    };
+
+    // 末尾新楼层首次提交：applyParsedToMessage 已做增量合并（与旧版新消息路径一致）；
+    // 替换旧增量、历史楼层、手动 HUD 覆盖时一律从全部楼层重放，旧增量随之撤销
+    const rebuilt = replacing || !isTail || !!manualRpg;
+    if (rebuilt) {
+        manager.rebuildTableData();
+        manager.rebuildRelationships();
+        manager.rebuildLocationMemory();
+        manager.rebuildRpgData();
+    }
+    return { meta, rebuilt };
+}
+
+/**
+ * 后台分析调度器
+ *
+ * deps:
+ *  - getChat(): 当前 chat 数组
+ *  - getChatKey(): 当前聊天唯一标识（chatId + groupId）
+ *  - analyze(job): Promise<string> 发起辅助模型请求，返回原始文本
+ *  - parse(raw): parseBgResponse 结果
+ *  - commit(job, result): 将结果写入 job.message（同步或异步）；仅在校验通过后调用
+ *  - markFailed(job, reason): 写入失败标记
+ *  - onStatus(job, state): UI 状态回调（queued / running / done / failed / stale）
+ *  - log(level, ...args)
+ */
+export class BackgroundAnalyzer {
+    constructor(deps) {
+        this.deps = deps;
+        this.queue = [];
+        this.running = null;
+        this._idleWaiters = [];
+        this._runtime = new WeakMap(); // message -> 'queued' | 'running'
+        this._generation = 0;          // reset() 时自增，用于作废旧循环
+    }
+
+    _log(level, ...args) {
+        try { this.deps.log?.(level, ...args); } catch { /* ignore */ }
+    }
+
+    /** 构造任务快照：所有身份字段都在入队时捕获 */
+    _makeJob(message, opts = {}) {
+        return {
+            message,
+            chatKey: this.deps.getChatKey(),
+            swipeId: getSwipeId(message),
+            fp: fingerprintText(message?.mes),
+            force: !!opts.force,
+            reason: opts.reason || 'auto',
+            enqueuedAt: Date.now(),
+        };
+    }
+
+    /** 任务是否仍指向当前聊天中的同一楼层、同一版本、同一正文 */
+    isJobCurrent(job) {
+        if (!job?.message) return false;
+        if (job.chatKey !== this.deps.getChatKey()) return false;
+        const chat = this.deps.getChat();
+        if (!Array.isArray(chat) || !chat.includes(job.message)) return false;
+        if (getSwipeId(job.message) !== job.swipeId) return false;
+        if (fingerprintText(job.message.mes) !== job.fp) return false;
+        return true;
+    }
+
+    indexOfJob(job) {
+        const chat = this.deps.getChat();
+        return Array.isArray(chat) ? chat.indexOf(job.message) : -1;
+    }
+
+    getRuntimeState(message) {
+        return message ? (this._runtime.get(message) || null) : null;
+    }
+
+    /** 是否有未完成任务（可选限定为当前聊天） */
+    hasPending(chatKey = null) {
+        const match = (j) => chatKey == null || j.chatKey === chatKey;
+        return (this.running && match(this.running)) || this.queue.some(match);
+    }
+
+    /**
+     * 安排分析
+     * @returns {boolean} 是否真正入队
+     */
+    schedule(messageIndex, opts = {}) {
+        const chat = this.deps.getChat();
+        const message = chat?.[messageIndex];
+        if (!message || message.is_user || message.is_system) return false;
+        if (message.horae_meta?._skipHorae) return false;
+        if (!String(message.mes ?? '').trim()) return false;
+        if (!opts.force && isMessageAnalyzed(message)) return false;
+
+        const job = this._makeJob(message, opts);
+
+        // 同一楼层同一版本已在运行 → 不重复
+        if (this.running && this.running.message === message && this.running.fp === job.fp
+            && this.running.swipeId === job.swipeId && this.running.chatKey === job.chatKey) {
+            if (!opts.force) return false;
+        }
+        // 队列中同一楼层只保留最新版本
+        const existingIdx = this.queue.findIndex(j => j.message === message);
+        if (existingIdx >= 0) {
+            const old = this.queue[existingIdx];
+            if (old.fp === job.fp && old.swipeId === job.swipeId && old.chatKey === job.chatKey) {
+                old.force = old.force || job.force;
+                return false;
+            }
+            this.queue.splice(existingIdx, 1);
+        }
+        this.queue.push(job);
+        this._runtime.set(message, 'queued');
+        this._emit(job, 'queued');
+        this._pump();
+        return true;
+    }
+
+    /** 丢弃所有排队任务（切换聊天时）；运行中的任务会在提交前被校验拒绝 */
+    reset() {
+        for (const job of this.queue) {
+            this._runtime.delete(job.message);
+            this._emit(job, 'stale');
+        }
+        this.queue = [];
+        this._generation++;
+        this._checkIdle();
+    }
+
+    /** 等待（当前聊天）后台任务清空；超时返回 false */
+    waitForIdle(timeoutMs = 60000, chatKey = null) {
+        if (!this.hasPending(chatKey)) return Promise.resolve(true);
+        return new Promise((resolve) => {
+            const waiter = { chatKey, resolve, timer: null };
+            waiter.timer = setTimeout(() => {
+                this._idleWaiters = this._idleWaiters.filter(w => w !== waiter);
+                resolve(false);
+            }, Math.max(0, timeoutMs));
+            this._idleWaiters.push(waiter);
+        });
+    }
+
+    _checkIdle() {
+        if (!this._idleWaiters.length) return;
+        const still = [];
+        for (const w of this._idleWaiters) {
+            if (!this.hasPending(w.chatKey)) {
+                clearTimeout(w.timer);
+                w.resolve(true);
+            } else {
+                still.push(w);
+            }
+        }
+        this._idleWaiters = still;
+    }
+
+    _emit(job, state, extra) {
+        // 终态先清掉运行时状态，保证回调里读到的显示状态是最终结果
+        // （同一楼层若已有新版本在排队，保留其 queued 状态）
+        if ((state === 'done' || state === 'failed' || state === 'stale')
+            && this.running === job && this._runtime.get(job.message) === 'running') {
+            this._runtime.delete(job.message);
+        }
+        try { this.deps.onStatus?.(job, state, extra); } catch (err) { this._log('warn', 'onStatus failed', err); }
+    }
+
+    /** 取出当前聊天中楼层号最小的任务；过期任务直接丢弃 */
+    _takeNext() {
+        while (this.queue.length) {
+            let bestI = -1;
+            let bestIdx = Infinity;
+            for (let i = 0; i < this.queue.length; i++) {
+                const job = this.queue[i];
+                if (!this.isJobCurrent(job)) continue;
+                const idx = this.indexOfJob(job);
+                if (idx < bestIdx) { bestIdx = idx; bestI = i; }
+            }
+            if (bestI < 0) {
+                for (const job of this.queue) {
+                    this._runtime.delete(job.message);
+                    this._emit(job, 'stale');
+                }
+                this.queue = [];
+                return null;
+            }
+            return this.queue.splice(bestI, 1)[0];
+        }
+        return null;
+    }
+
+    _pump() {
+        if (this.running) return;
+        const job = this._takeNext();
+        if (!job) { this._checkIdle(); return; }
+        this.running = job;
+        const gen = this._generation;
+        this._runtime.set(job.message, 'running');
+        this._emit(job, 'running');
+        this._runJob(job)
+            .catch(err => this._log('error', 'background job crashed', err))
+            .finally(() => {
+                if (this._runtime.get(job.message) === 'running') this._runtime.delete(job.message);
+                this.running = null;
+                if (gen !== this._generation) this._log('info', 'analyzer was reset during job');
+                // 让出事件循环，避免同步递归
+                setTimeout(() => this._pump(), 0);
+            });
+    }
+
+    async _runJob(job) {
+        if (!this.isJobCurrent(job)) { this._emit(job, 'stale'); return; }
+        if (!job.force && isMessageAnalyzed(job.message)) { this._emit(job, 'done'); return; }
+
+        let raw;
+        try {
+            raw = await this.deps.analyze(job);
+        } catch (err) {
+            const reason = err?.message || String(err || 'unknown error');
+            if (!this.isJobCurrent(job)) { this._emit(job, 'stale'); return; }
+            this._log('warn', `analysis request failed: ${reason}`);
+            await this.deps.markFailed(job, reason);
+            this._emit(job, 'failed', { reason });
+            return;
+        }
+
+        // 结果返回时再次校验：聊天、楼层、swipe、正文都必须未变
+        if (!this.isJobCurrent(job)) {
+            this._log('info', 'discarding stale analysis result');
+            this._emit(job, 'stale');
+            return;
+        }
+
+        const result = this.deps.parse(raw);
+        if (result.kind === 'invalid') {
+            this._log('warn', `invalid analysis response: ${result.reason}`);
+            await this.deps.markFailed(job, result.reason);
+            this._emit(job, 'failed', { reason: result.reason });
+            return;
+        }
+
+        try {
+            await this.deps.commit(job, result);
+            this._emit(job, 'done', { kind: result.kind });
+        } catch (err) {
+            const reason = `commit failed: ${err?.message || err}`;
+            this._log('error', reason, err);
+            if (this.isJobCurrent(job)) await this.deps.markFailed(job, reason);
+            this._emit(job, 'failed', { reason });
+        }
+    }
+}
+
+/** 默认后台分析提示词（无资源文件时的最终兜底） */
+export const DEFAULT_BG_PROMPT_EN = `[Horae Background State Analyzer]
+You are an independent state recorder, NOT the story author. Read ONE completed story reply (plus the user action that preceded it), identify the ESTABLISHED state changes, and output them in the private data format below. Your output is read only by a program and never appears in the story.
+
+=== Core rules ===
+1. Record only facts that actually happened. Do NOT record suggestions, planned or intended actions, hypotheticals, conditional outcomes, imagined scenes, lies told in dialogue, or user actions that have not been carried out.
+2. Incremental only: compared with [Current State], omit every field that did not change. Never re-register existing items, skills, NPCs, relationships or agenda entries.
+3. Never invent information that the text does not provide. Do not make up a time, outfit, affection score or stat just to fill a field.
+4. Time: write time: only when in-story time clearly advanced (or becomes known for the first time). It must be in-story time, never real-world time. Idle dialogue does not need to advance the date.
+5. Scene: write location:/characters: only when they change; characters: lists the full current set of present characters.
+6. Numeric values (HP/MP/SP bars, level, currency totals) are written as the CURRENT ABSOLUTE value after the change, computed from [Current State]. If unchanged, omit them.
+7. User action: state changes caused by the user's action that the reply confirms (or that the user has clearly carried out) must be recorded too, unless that action is marked as already settled.
+8. Events: write one event: line if this reply contains a story event worth tracing; trivial chit-chat may have no event.
+9. If nothing changed at all, output exactly: <horaenochange/>
+10. Output data tags only: no explanation, no story text, no code fences. Write values in the same language as the story text.
+
+The "format reference" sections below were originally written for another context. Any wording like "must include at the end of every reply", "required every turn", "missing = fail" does NOT apply here; the core rules above take precedence.
+
+=== Current State (before this reply, read-only) ===
+{{state}}
+
+=== Preceding user action ===
+{{previousUserMessage}}
+
+=== Story reply to analyze (speaker: {{speaker}}) ===
+<story>
+{{content}}
+</story>
+
+=== Output format ===
+<horae>
+time:date time (only if changed)
+location:place (only if changed; use · for nested places, keep names identical to Current State)
+atmosphere:mood of the scene (only if changed)\${sceneDescLine}
+characters:full names of all present characters, comma separated (only if the set changed)
+costume:name=outfit description (only on change or first appearance, one line per person)
+item:emoji name(qty)|description=holder@exact location (newly obtained, or quantity/holder/location changed)
+item!:... / item!!:... (important / key items, description required)
+item-:item name (consumed, lost, or no longer tracked)
+affection:NPC name=new total (NPC toward {{user}} only; only on change or first appearance)
+npc:name|appearance=personality@relationship to {{user}}~gender:x~age:x~race:x~job:x (full on first appearance; later only changed fields)\${relLine}\${moodLine}
+agenda:date|content (new promise/plan/task)
+agenda-:content keyword (completed / invalidated)
+</horae>
+<horaeevent>
+event:level|summary (level: normal/important/critical)
+</horaeevent>
+{{modules}}`;
+
+export const DEFAULT_BG_PROMPT_ZH = `【Horae 后台状态分析器】
+你是独立运行的“状态记录员”，不是故事作者。你的唯一任务：阅读下方一条已经完成的剧情回复（以及它之前的用户行动），找出其中【已确立的状态变化】，按下方的私有数据格式输出。你的输出只会被程序读取，永远不会出现在剧情中。
+
+═══ 基本原则 ═══
+1. 只记录已经实际发生的事实。建议、计划/打算中的行动、假设、条件性的可能结果、想象画面、台词中的谎言、用户尚未执行的行动——一律不记录。
+2. 只做增量：与【当前状态】相比没有变化的字段一律不写。禁止重复登记已有的物品、技能、NPC、关系、待办。
+3. 禁止编造：文本没有提供的信息不写。不要为了“填满字段”而虚构时间、服装、好感度、数值。
+4. 时间：只有剧情内时间明确推进（或首次能够确定）时才写 time:，必须是故事内时间，绝不能使用现实时间。闲聊对话不需要推进日期。
+5. 场景：地点、在场角色发生变化时才写 location:/characters:；characters: 写当前完整的在场名单。
+6. 数值类（HP/MP/SP 等属性条、等级、货币）写变化后的【当前绝对值】，以【当前状态】为基准计算；没有变化就不写。
+7. 用户行动：本条回复确认发生（或用户已明确执行）的用户行动所造成的状态变化也要记录；若该行动被标注为“已结算”，则不得重复记录。
+8. 事件：本条回复中有值得追溯的剧情事件时写一条 event:；纯闲聊、无实质进展可以不写。
+9. 若本条回复没有任何状态变化，只输出：<horaenochange/>
+10. 只输出数据标签：不要解释，不要正文，不要代码块标记。字段内容使用与剧情相同的语言。
+
+下方各“格式参考”原本是为其他场景编写的，其中“每回合必须/必填/缺少=不合格/回复末尾必须包含”等要求在此【一律不适用】，以上基本原则优先。
+
+═══ 当前状态（本条回复之前，只读） ═══
+{{state}}
+
+═══ 之前的用户行动 ═══
+{{previousUserMessage}}
+
+═══ 待分析的剧情回复（发言者：{{speaker}}） ═══
+<story>
+{{content}}
+</story>
+
+═══ 输出格式 ═══
+<horae>
+time:日期 时间（仅变化时）
+location:地点（仅变化时；多级地点用·分隔，名称与当前状态保持一致）
+atmosphere:氛围（仅变化时）\${sceneDescLine}
+characters:当前在场角色全名,逗号分隔（仅在场名单变化时）
+costume:角色名=服装描述（仅服装变化或首次登场时，每人一行）
+item:emoji物品名(数量)|描述=持有者@精确位置（新获得，或已有物品的数量/持有者/位置改变）
+item!:… / item!!:…（重要/关键物品，描述必填）
+item-:物品名（消耗、丢失或不再需要追踪时）
+affection:NPC名=新好感度总值（仅NPC对{{user}}，仅变化或首次登场时）
+npc:名|外貌=性格@与{{user}}的关系~性别:值~年龄:值~种族:值~职业:值（首次登场写完整；之后只写变化的字段）\${relLine}\${moodLine}
+agenda:订立日期|内容（新的约定/计划/任务）
+agenda-:内容关键词（已完成/已失效）
+</horae>
+<horaeevent>
+event:重要程度|事件简述（30-50字，重要程度：一般/重要/关键）
+</horaeevent>
+{{modules}}`;
