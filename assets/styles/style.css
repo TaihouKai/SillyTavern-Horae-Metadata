@@ -8708,3 +8708,9 @@ body .horae-context-menu {
     padding-left: 8px;
     border-left: 2px solid var(--horae-border);
 }
+
+/* Metadata 模式：隐藏正文末尾主模型写出的状态行（仅显示层，mes 不变） */
+.mes_text .horae-state-dump-hidden {
+    display: none !important;
+}
+

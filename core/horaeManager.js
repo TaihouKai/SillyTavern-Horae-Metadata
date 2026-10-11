@@ -617,7 +617,15 @@ class HoraeManager {
             '[현재 상태 스냅샷——지금까지의 스토리에서 시스템이 자동 기록, 서사 일관성 참고용]',
             '[Снимок текущего состояния — автоматически записан по сюжету, для согласованности повествования]',
         ));
-        else lines.push(L(
+        // 主模型：说明状态由后台维护，回复只写正文（旧卡/旧历史常让模型照抄 time:/costume: 等状态行）
+        if (readOnly && audience === 'main') lines.push(L(
+            '[状态由系统在后台自动记录与更新；回复只写剧情正文，不要写状态行或标签]',
+            '[State is recorded and updated automatically in the background; reply with story prose only, without any state lines or tags]',
+            '[状態はシステムがバックグラウンドで自動記録・更新；返信は物語本文のみ、状態行やタグは書かない]',
+            '[상태는 시스템이 백그라운드에서 자동 기록·갱신; 답변은 스토리 본문만, 상태 줄이나 태그는 출력하지 않음]',
+            '[Состояние записывается и обновляется автоматически в фоне; отвечайте только текстом истории, без строк состояния и тегов]',
+        ));
+        else if (!readOnly) lines.push(L(
             '[当前状态快照——对比本回合剧情，仅在<horae>中输出发生实质变化的字段]',
             '[Current State Snapshot — compare with this round\'s plot, only output substantively changed fields in <horae>]',
             '[現在の状態スナップショット——今回のストーリーと比較し、実質的に変化したフィールドのみ<horae>に出力]',

@@ -77,6 +77,35 @@ export function hasMeaningfulParsed(parsed) {
     return false;
 }
 
+// 主模型受旧卡/旧历史影响而在正文末尾写出的裸状态行（time:/costume:/npc:/event: …）
+const STATE_DUMP_KEY_RE = /^\s*(?:[-*•·]\s*)?(?:time|date|location|atmosphere|scene_desc|characters|costume|item-|item!!|item!|item|event|affection|npc|agenda-|agenda|rel|mood|status|skill-|skill|equip|unequip|rep|level|xp|currency|attr|base)\s*[:：]/i;
+const STATE_DUMP_BAR_RE = /^\s*[a-z]{1,10}\s*[:：][^=＝\n]{1,40}[=＝]\s*-?\d+(?:\.\d+)?\s*\/\s*\d+/i;
+const STATE_DUMP_TAG_RE = /^\s*<\/?horae(?:event|rpg|table[:：]?[^>]*)?\s*\/?>\s*$|^\s*<horaenochange\s*\/?>\s*$/i;
+
+export function isStateDumpLine(line) {
+    return STATE_DUMP_KEY_RE.test(line) || STATE_DUMP_BAR_RE.test(line) || STATE_DUMP_TAG_RE.test(line);
+}
+
+/**
+ * 拆出正文末尾连续的状态行块（至少 2 行，中间可夹空行/标签行）。只用于显示隐藏与发送前清理，不改 mes。
+ * @returns {{prose:string, dump:string}} 无状态块时 dump 为 ''
+ */
+export function splitTrailingStateDump(text) {
+    const src = String(text ?? '');
+    const lines = src.split('\n');
+    let start = lines.length;
+    let count = 0;
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].replace(/\r$/, '');
+        if (!line.trim()) { start = i; continue; }
+        if (!isStateDumpLine(line)) break;
+        if (!STATE_DUMP_TAG_RE.test(line)) count++;
+        start = i;
+    }
+    if (count < 2) return { prose: src, dump: '' };
+    return { prose: lines.slice(0, start).join('\n').replace(/\s+$/, ''), dump: lines.slice(start).join('\n').trim() };
+}
+
 /**
  * 严格解析辅助模型的私有响应
  * @returns {{kind:'changes', parsed:object} | {kind:'nochange'} | {kind:'invalid', reason:string}}

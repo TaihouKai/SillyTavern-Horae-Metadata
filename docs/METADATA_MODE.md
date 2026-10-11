@@ -44,7 +44,17 @@ In Metadata mode Horae never asks the main model to output anything. Remove the 
 
 **Keep everything else.** The GM's narrative control, Fate/TYPE-MOON lore, character definitions and the Servant-tool instructions (`RandomServant`, `SummonServant`, `SaveServant`, `GetServant`) need no changes. The separate Servant extension and its `chatMetadata.createServant` state are untouched by this fork.
 
-The GM still **receives** the current world state (time, place, present characters and outfits, items, NPCs, relationships, HP/MP/SP, skills, equipment, timeline, vector recall). The snapshot header is now read-only: *"Current State Snapshot — recorded automatically from the story so far, for narrative continuity reference"*.
+The GM still **receives** the current world state (time, place, present characters and outfits, items, NPCs, relationships, HP/MP/SP, skills, equipment, timeline, vector recall). The snapshot header is now read-only: *"Current State Snapshot — recorded automatically from the story so far, for narrative continuity reference"*. It is followed by one line telling the GM that state is tracked in the background and replies should be prose only.
+
+### If the GM still writes state lines
+
+Old card rules, or earlier replies that contain state lines, can make the GM keep ending replies with `time:` / `costume:` / `npc:` / `event:` lines. In Metadata mode Horae handles this without touching the saved text:
+
+* **Display:** a block of two or more state lines at the end of a reply is hidden. Editing the message still shows the full original text.
+* **Prompt:** the same trailing block is removed from earlier replies before each request, so the GM is not shown examples to copy. `message.mes` is not changed.
+* **Analysis:** the analyzer still receives the full reply. It extracts state through its own strict format, so the GM's lines are only extra context.
+
+This is a safety net. Removing the old output rules from the card (table above) is still the real fix.
 
 ---
 
@@ -203,6 +213,11 @@ A mutation check (disabling the rebuild on replace) makes the relevant tests fai
 * An existing install without `stateMode` migrates to Legacy, and its other settings are preserved.
 * An explicit Metadata choice survives reload.
 
+### Leaked state lines (`tests/e2e/stateDump.mjs`) → **7 / 7 pass**
+
+* A reply ending in a `time:`/`costume:`/`npc:`/`event:` block shows only the prose, also after re-rendering, and `mes` stays byte-identical.
+* The next request carries that reply without the block, and the snapshot includes the prose-only line.
+
 ### Main API only (`tests/e2e/mainApiOnly.mjs`) → **5 / 5 pass**
 
 * With the auxiliary API disabled, the analysis request goes through the main API and the reply is marked analyzed.
@@ -226,6 +241,7 @@ node server.js --port 8000                         # terminal 2, inside a SillyT
 PLAYWRIGHT_PATH=<dir with playwright>/package.json node tests/e2e/run.mjs
 PLAYWRIGHT_PATH=... ST_DATA=<ST>/data/default-user node tests/e2e/migration.mjs
 PLAYWRIGHT_PATH=... node tests/e2e/mainApiOnly.mjs
+PLAYWRIGHT_PATH=... node tests/e2e/stateDump.mjs
 ```
 
 The E2E suite configures ST's main API (Custom OpenAI-compatible → mock) and Horae's auxiliary API itself. Run it against a **throw-away** ST data directory: it creates chats and a group, and `migration.mjs` temporarily rewrites `settings.json` (it restores the file afterwards).

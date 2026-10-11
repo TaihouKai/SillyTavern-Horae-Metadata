@@ -410,7 +410,8 @@ try {
     await mock('/control', { clearLogs: true });
     const lenBeforeMain = (await chatSnapshot(page)).length;
     await page.evaluate((i) => window.Horae.background.reanalyze(i), idx);
-    await waitBg(page, idx, ['done', 'nochange', 'failed'], 30000);
+    // 旧状态本就是 failed，不能用 waitBg 判断完成；等待队列空闲
+    await waitIdle(page, 30000);
     snap = await chatSnapshot(page);
     logs = await mock('/logs');
     check(results, 'S9b aux disabled: analysis routed through main API without adding chat messages', snap[idx].bg.status === 'done' && snap.length === lenBeforeMain && logs.some(l => l.type === 'aux' && l.model === 'mock-main'), `status=${snap[idx].bg.status} len ${lenBeforeMain}->${snap.length} models=${JSON.stringify(logs.filter(l => l.type === 'aux').map(l => l.model))}`);

@@ -221,3 +221,46 @@ test('scheduler: waitForIdle times out instead of deadlocking', async () => {
     // 不同聊天的等待不受影响
     assert.equal(await h.analyzer.waitForIdle(10, 'other-chat'), true);
 });
+
+// ---------- 主模型正文末尾的裸状态行（仅显示/发送层隐藏） ----------
+
+test('state dump: trailing bare state lines are split off, prose kept intact', () => {
+    const prose = '上官鹭的脚已经踩上了平衡梁的起点踏板。梁体在脚下第一次摆动，把她的重心推歪了三度。';
+    const dump = [
+        'time:2021/9/19 11:03',
+        'location:第七学区·运动公园·A-3竞技场·平衡梁起点踏板',
+        'atmosphere:竞速高潮与转播亢奋',
+        'characters:上官鹭,御坂美琴',
+        'costume:上官鹭=大会统一体操服＋过膝袜',
+        'item:号码牌"4"(1)|A-3白组四道号码牌=上官鹭@已装备（胸前）',
+        'affection:御坂美琴=+2（兴趣上升）',
+        'mood:芦沢柚希=警觉',
+        'npc:白组一道选手|短发＝胆怯@白组一道竞争对手~性别:女~年龄:18',
+        'agenda:2021/9/19|第二障碍',
+        'event:重要|上官鹭越过水墙',
+        '',
+        'event:重要|上官鹭越过水墙（简）',
+    ].join('\n');
+    const r = bg.splitTrailingStateDump(`"——喔！！"转播席的声音炸开。\n\n${prose}\n\n${dump}`);
+    assert.ok(r.prose.endsWith(prose));
+    assert.ok(r.dump.startsWith('time:2021/9/19 11:03'));
+    assert.ok(r.dump.endsWith('（简）'));
+});
+
+test('state dump: tagged blocks, bars and RPG lines are recognized', () => {
+    const r = bg.splitTrailingStateDump('正文。\n<horae>\ntime:1/1\nlocation:A\n</horae>\n<horaerpg>\nhp:尤丝蒂娜=84/100\nskill:尤丝蒂娜|强化|Lv1|x\n</horaerpg>');
+    assert.equal(r.prose, '正文。');
+});
+
+test('state dump: prose and single stray lines are left alone', () => {
+    for (const text of [
+        '她说：“time: 这个词你懂吗？”\n然后离开了。',
+        '正文第一段。\n\nlocation:某处',
+        '正文。\nevent:重要|x\n然后她笑了。',
+        'Note: the door is locked.\nStatus: unknown',
+    ]) {
+        const r = bg.splitTrailingStateDump(text);
+        assert.equal(r.dump, '', text);
+        assert.equal(r.prose, text);
+    }
+});

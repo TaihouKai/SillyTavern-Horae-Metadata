@@ -12,7 +12,7 @@ import { slideToggle } from '/lib.js';
 
 import { horaeManager, createEmptyMeta, getItemBaseName } from './core/horaeManager.js';
 import { vectorManager } from './core/vectorManager.js';
-import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH } from './core/bgAnalysis.js';
+import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH } from './core/bgAnalysis.js';
 import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate } from './utils/timeUtils.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
 import { initPromptDefaults, ensurePromptDefaults, ensurePresetPrompts, getPromptDefaultSync, getPresetPromptsSync, BUILTIN_PRESET_IDS } from './core/promptDefaults.js';
@@ -20725,7 +20725,97 @@ function _bgStatusBadgeHtml(messageIndex) {
     return `<span class="horae-bg-status" data-state="${state}" title="${escapeHtml(_bgStatusTitle(messageIndex, state))}">${_bgStatusLabel(state)}</span>`;
 }
 
+/**
+ * Metadata 模式：隐藏正文末尾主模型（受旧卡/旧历史影响）写出的裸状态行。
+ * 只改渲染后的 DOM，不改 mes；编辑消息时原文仍完整可见。
+ */
+const _DUMP_HIDDEN_CLASS = 'horae-state-dump-hidden';
+const _DUMP_BLOCK_TAGS = new Set(['P', 'DIV', 'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TABLE', 'HR']);
+
+function _dumpNodeText(node) {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent;
+    if (node.nodeName === 'BR') return '\n';
+    const clone = node.cloneNode(true);
+    clone.querySelectorAll?.('br').forEach(br => br.replaceWith('\n'));
+    return clone.textContent || '';
+}
+
+function _hideDumpNode(node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+        if (!node.textContent.trim()) return;
+        const span = document.createElement('span');
+        span.className = _DUMP_HIDDEN_CLASS;
+        node.parentNode.insertBefore(span, node);
+        span.appendChild(node);
+    } else if (node.classList) {
+        node.classList.add(_DUMP_HIDDEN_CLASS);
+    }
+}
+
+/** @returns {boolean} 容器内容是否全部为状态行（是则调用方继续向前处理） */
+function _hideTrailingDumpIn(container) {
+    const nodes = [...container.childNodes];
+    let seg = [];
+    // 'blank' | 'dump' | 'prose'
+    const flush = () => {
+        const text = seg.map(_dumpNodeText).join('');
+        const lines = text.split('\n').filter(l => l.trim());
+        let res = 'blank';
+        if (lines.length) {
+            res = lines.every(isStateDumpLine) ? 'dump' : 'prose';
+            if (res === 'dump') seg.forEach(_hideDumpNode);
+        }
+        seg = [];
+        return res;
+    };
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const n = nodes[i];
+        if (n.classList?.contains(_DUMP_HIDDEN_CLASS)) continue;
+        if (n.nodeType === Node.ELEMENT_NODE && _DUMP_BLOCK_TAGS.has(n.nodeName)) {
+            if (flush() === 'prose') return false;
+            const lines = _dumpNodeText(n).split('\n').filter(l => l.trim());
+            if (!lines.length) continue;
+            if (lines.every(isStateDumpLine)) { _hideDumpNode(n); continue; }
+            _hideTrailingDumpIn(n);
+            return false;
+        }
+        if (n.nodeName === 'BR') {
+            const res = flush();
+            if (res === 'prose') return false;
+            if (res === 'dump') _hideDumpNode(n);
+            continue;
+        }
+        seg.unshift(n);
+    }
+    return flush() !== 'prose';
+}
+
+function _bgHideStateDump(messageIndex) {
+    if (!_isMetadataMode()) return;
+    try {
+        const msg = horaeManager.getChat()?.[messageIndex];
+        if (!msg || msg.is_user || !splitTrailingStateDump(msg.mes).dump) return;
+        const body = document.querySelector(`.mes[mesid="${messageIndex}"] .mes_text`);
+        if (body) _hideTrailingDumpIn(body);
+    } catch (err) {
+        console.warn('[Horae][BG] 隐藏状态行失败:', err);
+    }
+}
+
+/** 发送前从历史 AI 消息中去掉末尾状态行，避免主模型照着历史继续输出（仅影响本次请求，不改 mes） */
+function _bgStripStateDumpFromPrompt(promptChat) {
+    if (!Array.isArray(promptChat)) return 0;
+    let stripped = 0;
+    for (const m of promptChat) {
+        if (m?.role !== 'assistant' || typeof m.content !== 'string') continue;
+        const { prose, dump } = splitTrailingStateDump(m.content);
+        if (dump) { m.content = prose; stripped++; }
+    }
+    return stripped;
+}
+
 function _bgUpdateStatusBadge(messageIndex) {
+    _bgHideStateDump(messageIndex);
     try {
         const messageEl = document.querySelector(`.mes[mesid="${messageIndex}"]`);
         if (!messageEl) return;
@@ -20746,6 +20836,7 @@ function _bgUpdateStatusBadge(messageIndex) {
 }
 
 function _bgRerenderPanel(messageIndex) {
+    _bgHideStateDump(messageIndex);
     try {
         const messageEl = document.querySelector(`.mes[mesid="${messageIndex}"]`);
         if (!messageEl) return;
@@ -21605,6 +21696,10 @@ async function onPromptReady(eventData) {
         console.log('[Horae] Internal no-context marker detected, skip Horae context injection for this request');
         return;
     }
+    if (settings.enabled && _isMetadataMode()) {
+        const n = _bgStripStateDumpFromPrompt(eventData?.chat);
+        if (n) console.log(`[Horae][BG] 已从发送内容中移除 ${n} 条历史回复末尾的状态行（正文未改动）`);
+    }
     if (!settings.enabled || !settings.injectContext) return;
     if (eventData.dryRun) return;
 
@@ -21937,6 +22032,7 @@ function onMessageRendered(messageId) {
             if (!messageEl) return;
             // 仅旧模式需要清理泄露标签的显示；Metadata 模式原样显示正文
             if (!_isMetadataMode()) _sanitizeLeakedHoraeTags(messageEl);
+            else _bgHideStateDump(messageId);
             const msg = horaeManager.getChat()[messageId];
             if (msg && !msg.is_user && settings.showMessagePanel) {
                 addMessagePanel(messageEl, messageId);
