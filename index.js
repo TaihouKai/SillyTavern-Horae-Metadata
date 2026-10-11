@@ -21,7 +21,15 @@ import { initPromptDefaults, ensurePromptDefaults, ensurePresetPrompts, getPromp
 // 常量定义
 // ============================================
 const EXTENSION_NAME = 'horae';
-const EXTENSION_FOLDER = `third-party/SillyTavern-Horae`;
+// 从模块自身 URL 推导安装目录，兼容 fork 以不同文件夹名安装（如 SillyTavern-Horae-Metadata）
+const EXTENSION_FOLDER = (() => {
+    try {
+        const path = decodeURIComponent(new URL('.', import.meta.url).pathname);
+        const m = path.match(/\/scripts\/extensions\/(third-party\/[^/]+)\/?$/);
+        if (m) return m[1];
+    } catch (_) { /* ignore */ }
+    return 'third-party/SillyTavern-Horae';
+})();
 const TEMPLATE_PATH = `${EXTENSION_FOLDER}/assets/templates`;
 const VERSION = '1.15.1';
 

@@ -4,7 +4,17 @@
  * 运行：PLAYWRIGHT_PATH=<含 playwright 的 package.json> node tests/e2e/run.mjs
  */
 import { writeFileSync } from 'node:fs';
-import { launch, openST, mock, waitFor, waitBg, chatSnapshot, rpgData, sendUser, check, sleep, waitIdle, currentChatRef, reopenChat, MOCK_URL } from './lib.mjs';
+import { launch, openST, mock, waitFor, waitBg, chatSnapshot, rpgData, sendUser, check, sleep, waitIdle, currentChatRef, reopenChat, MOCK_URL, ST_URL } from './lib.mjs';
+
+// 扩展目录名随安装方式而变（上游 SillyTavern-Horae / fork SillyTavern-Horae-Metadata）
+async function findVectorModuleUrl() {
+    for (const folder of [process.env.HORAE_FOLDER, 'SillyTavern-Horae-Metadata', 'SillyTavern-Horae'].filter(Boolean)) {
+        const url = `/scripts/extensions/third-party/${folder}/core/vectorManager.js`;
+        if ((await fetch(ST_URL + url)).ok) return url;
+    }
+    throw new Error('Horae extension folder not found on ST server');
+}
+const VM_URL = await findVectorModuleUrl();
 
 const results = [];
 const { browser, page, consoleLines } = await launch({ headless: process.env.HEADED ? false : true });
@@ -282,11 +292,11 @@ try {
     check(results, 'S16 HUD edit stored as manual override in metadata', !!snap[hudIdx].meta?._manualRpgEdits?.bars?.[U]?.hp);
 
     // ===== 场景 17：向量记忆（重载前） =====
-    const vecBefore = await page.evaluate(async () => {
-        const mod = await import('/scripts/extensions/third-party/SillyTavern-Horae/core/vectorManager.js');
+    const vecBefore = await page.evaluate(async (vmUrl) => {
+        const mod = await import(vmUrl);
         const vm = mod.vectorManager;
         return { ready: vm.isReady, size: vm.vectors?.size || 0, docs: [...(vm.vectors?.values() || [])].map(v => v.document) };
-    });
+    }, VM_URL);
     check(results, 'S17 vector index built from background metadata (no inline tags in mes)', vecBefore.ready && vecBefore.size > 0 && vecBefore.docs.some(d => d.includes('教会')), `size=${vecBefore.size} docs=${JSON.stringify(vecBefore.docs).slice(0, 200)}`);
 
     // ===== 场景 10：重新加载 =====
@@ -306,10 +316,10 @@ try {
     check(results, 'S10 reload: rendering history triggers no analysis requests', logs.filter(l => l.type === 'aux').length === 0, `aux requests: ${logs.filter(l => l.type === 'aux').length}`);
     check(results, 'S1 reload: no tags in any mes', after.every(m => noTags(m.mes)));
 
-    const vecAfter = await page.evaluate(async () => {
-        const mod = await import('/scripts/extensions/third-party/SillyTavern-Horae/core/vectorManager.js');
+    const vecAfter = await page.evaluate(async (vmUrl) => {
+        const mod = await import(vmUrl);
         return { size: mod.vectorManager.vectors?.size || 0 };
-    });
+    }, VM_URL);
     check(results, 'S17 vector index persisted across reload', vecAfter.size === vecBefore.size, `${vecBefore.size} -> ${vecAfter.size}`);
     check(results, 'S16 HUD edit survives reload/rebuild', rpgAfter?.bars?.[U]?.hp?.[0] === 70);
     await mock('/control', { mainQueue: ['你检查了自己的伤势。'], clearLogs: true });

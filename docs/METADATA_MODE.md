@@ -8,16 +8,17 @@ The original behavior is still available as **Legacy / Inline tags**, where the 
 
 ## 1. Installation and activation
 
-1. Install the fork like any third-party extension. The folder name must stay `SillyTavern-Horae` because Horae loads its templates from `third-party/SillyTavern-Horae`:
-   - **Extensions → Install extension**, then enter your fork's Git URL, or
-   - copy or clone this repository into `SillyTavern/data/<user>/extensions/SillyTavern-Horae` (or `public/scripts/extensions/third-party/SillyTavern-Horae`).
+1. If the original Horae (`SenriYuki/SillyTavern-Horae`) is installed, delete it first: **Extensions → Manage extensions → Horae → Delete**. Both versions are 1.15.1, so SillyTavern's update button never switches you to the fork, and having both installed loads Horae twice. Your Horae settings and chat data are kept, because they live in SillyTavern's settings and chat files, not in the extension folder.
+   Then install the fork:
+   - **Extensions → Install extension**, then enter `https://github.com/TaihouKai/SillyTavern-Horae-Metadata`, or
+   - copy or clone this repository into `SillyTavern/data/<user>/extensions/` (or `public/scripts/extensions/third-party/`). Any folder name works, because Horae finds its own install path at runtime.
 2. Reload SillyTavern.
 3. Open the Horae drawer and go to **Settings**:
    - **State tracking mode** → `Background analysis / Metadata only`. Fresh installs of this fork default to this mode. **Existing installs keep `Legacy`** until you switch, and nothing else in your settings changes.
    - **Automatically analyze new AI replies in the background**: on (default).
    - **Wait for background analysis before sending**: on (default), with a 60 s cap.
-4. Under **Auxiliary API**, enable the auxiliary API and set the URL (OpenAI-compatible, e.g. `https://…/v1`), the key and the model. Keep **"AI analysis, magic wand…"** checked. **"Fall back to main API on failure"** keeps your existing choice (off by default).
-   - If the auxiliary API is disabled entirely, the analysis uses the main API through `generateRaw` (same as the existing Horae "AI analysis"). It never starts a normal narrative generation and never adds messages to the chat.
+4. Optional: under **Auxiliary API**, enable the auxiliary API and set the URL (OpenAI-compatible, e.g. `https://…/v1`), the key and the model. Keep **"AI analysis, magic wand…"** checked. **"Fall back to main API on failure"** keeps your existing choice (off by default).
+   - **Main API only:** leave the auxiliary API disabled. If the auxiliary API is disabled entirely, the analysis uses the main API through `generateRaw` (same as the existing Horae "AI analysis"). It never starts a normal narrative generation and never adds messages to the chat.
 5. Auto-summary and auto-hide are **not** turned on by this fork. Leave them off if you don't want them.
 
 ### Minimal smoke test
@@ -202,6 +203,13 @@ A mutation check (disabling the rebuild on replace) makes the relevant tests fai
 * An existing install without `stateMode` migrates to Legacy, and its other settings are preserved.
 * An explicit Metadata choice survives reload.
 
+### Main API only (`tests/e2e/mainApiOnly.mjs`) → **5 / 5 pass**
+
+* With the auxiliary API disabled, the analysis request goes through the main API and the reply is marked analyzed.
+* The item from the reply reaches metadata. No extra chat messages are added and the reply text is unchanged.
+
+The full suite above also passes with the extension installed under the fork's folder name `SillyTavern-Horae-Metadata`.
+
 ### Not executed / limits of the tests
 
 * **No real LLM was used.** Analyzer and GM replies were scripted. These tests prove the plumbing (separation, parsing, persistence, ordering, rollback, UI), not the extraction quality of a particular model (e.g. Qwen). Run the smoke test above with your real auxiliary model, and review a real analyzer request (`node tests/e2e/dumpPrompt.mjs` against the mock, or the browser network tab).
@@ -217,6 +225,7 @@ node tests/e2e/mockServer.mjs 5555                 # terminal 1
 node server.js --port 8000                         # terminal 2, inside a SillyTavern checkout with this fork installed
 PLAYWRIGHT_PATH=<dir with playwright>/package.json node tests/e2e/run.mjs
 PLAYWRIGHT_PATH=... ST_DATA=<ST>/data/default-user node tests/e2e/migration.mjs
+PLAYWRIGHT_PATH=... node tests/e2e/mainApiOnly.mjs
 ```
 
 The E2E suite configures ST's main API (Custom OpenAI-compatible → mock) and Horae's auxiliary API itself. Run it against a **throw-away** ST data directory: it creates chats and a group, and `migration.mjs` temporarily rewrites `settings.json` (it restores the file afterwards).
