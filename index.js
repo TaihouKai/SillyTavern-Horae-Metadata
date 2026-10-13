@@ -4370,23 +4370,44 @@ function updateRelationshipDisplay() {
         return;
     }
 
-    const html = relationships.map((rel, idx) => `
-        <div class="horae-relationship-item" data-rel-index="${idx}">
+    const html = relationships.map((rel, idx) => {
+        const locked = horaeManager.isRelationshipLocked(rel);
+        return `
+        <div class="horae-relationship-item${locked ? ' horae-rel-locked' : ''}" data-rel-index="${idx}">
             <div class="horae-rel-content">
                 <span class="horae-rel-from">${rel.from}</span>
                 <span class="horae-rel-arrow">→</span>
                 <span class="horae-rel-to">${rel.to}</span>
                 <span class="horae-rel-type">${rel.type}</span>
+                ${locked ? `<i class="fa-solid fa-lock horae-rel-lock-badge" title="${escapeHtml(t('characters.relLockedTip'))}"></i>` : ''}
                 ${rel.note ? `<span class="horae-rel-note">${rel.note}</span>` : ''}
             </div>
             <div class="horae-rel-actions">
+                <button class="horae-rel-lock${locked ? ' active' : ''}" title="${escapeHtml(t(locked ? 'characters.relLockedTip' : 'characters.relUnlockedTip'))}"><i class="fa-solid ${locked ? 'fa-lock' : 'fa-lock-open'}"></i></button>
                 <button class="horae-rel-edit" title="${t('common.edit')}"><i class="fa-solid fa-pen"></i></button>
                 <button class="horae-rel-delete" title="${t('common.delete')}"><i class="fa-solid fa-trash"></i></button>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 
     listEl.innerHTML = html;
+
+    // 锁定开关：锁定后剧情分析不再修改该关系；解锁后剧情可在当前值基础上继续演进
+    listEl.querySelectorAll('.horae-rel-lock').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const idx = parseInt(btn.closest('.horae-relationship-item').dataset.relIndex);
+            const rels = horaeManager.getRelationships();
+            const rel = rels[idx];
+            if (!rel) return;
+            rel._locked = !horaeManager.isRelationshipLocked(rel);
+            rel._userEdited = true; // 作为基础保留，重建时不丢失
+            horaeManager.setRelationships(rels);
+            await getContext().saveChat();
+            updateRelationshipDisplay();
+            showToast(t(rel._locked ? 'characters.relLockedToast' : 'characters.relUnlockedToast'), 'info');
+        });
+    });
 
     // 绑定编辑/删除事件
     listEl.querySelectorAll('.horae-rel-edit').forEach(btn => {
@@ -4427,6 +4448,8 @@ function openRelationshipEditModal(editIndex = null) {
     const rels = horaeManager.getRelationships();
     const isEdit = editIndex !== null && editIndex >= 0;
     const existing = isEdit ? rels[editIndex] : { from: '', to: '', type: '', note: '' };
+    // 原版：手动编辑即锁定。已显式设置过锁定状态的关系沿用其设置
+    const lockedDefault = isEdit && typeof existing._locked === 'boolean' ? existing._locked : true;
 
     const modalHtml = `
         <div id="horae-edit-modal" class="horae-modal">
@@ -4450,6 +4473,12 @@ function openRelationshipEditModal(editIndex = null) {
                     <div class="horae-edit-field">
                         <label>${t('placeholder.relNote')}</label>
                         <input type="text" id="horae-rel-note" value="${escapeHtml(existing.note || '')}" placeholder="${t('placeholder.relNote')}">
+                    </div>
+                    <div class="horae-edit-field">
+                        <label class="horae-rel-lock-label">
+                            <input type="checkbox" id="horae-rel-locked" ${lockedDefault ? 'checked' : ''}>
+                            <i class="fa-solid fa-lock"></i> ${t('characters.relLockLabel')}
+                        </label>
                     </div>
                 </div>
                 <div class="horae-modal-footer">
@@ -4476,6 +4505,7 @@ function openRelationshipEditModal(editIndex = null) {
         const to = document.getElementById('horae-rel-to').value.trim();
         const type = document.getElementById('horae-rel-type').value.trim();
         const note = document.getElementById('horae-rel-note').value.trim();
+        const locked = !!document.getElementById('horae-rel-locked')?.checked;
 
         if (!from || !to || !type) {
             showToast(t('toast.relFieldsRequired'), 'warning');
@@ -4484,7 +4514,7 @@ function openRelationshipEditModal(editIndex = null) {
 
         if (isEdit) {
             const oldRel = rels[editIndex];
-            rels[editIndex] = { from, to, type, note, _userEdited: true };
+            rels[editIndex] = { from, to, type, note, _userEdited: true, _locked: locked };
             // 同步更新各消息中的关系数据，防止 rebuildRelationships 复原旧值
             const chat = horaeManager.getChat();
             for (let i = 1; i < chat.length; i++) {
@@ -4501,7 +4531,8 @@ function openRelationshipEditModal(editIndex = null) {
                 if (changed) injectHoraeTagToMessage(i, meta);
             }
         } else {
-            rels.push({ from, to, type, note });
+            // 手动新增的关系不在任何楼层里，标记 _userEdited 才能在重建时保留
+            rels.push({ from, to, type, note, _userEdited: true, _locked: locked });
         }
 
         horaeManager.setRelationships(rels);
@@ -19842,7 +19873,9 @@ async function createNewChatWithCarryover() {
         }
         if (Array.isArray(seedMeta.relationships)) {
             for (const rel of seedMeta.relationships) {
-                if (rel && typeof rel === 'object' && !rel._userEdited) {
+                if (rel && typeof rel === 'object') {
+                    // 先固化源聊天中的锁定状态，再标记为基础（继承的关系默认不锁定，可继续演进）
+                    if (typeof rel._locked !== 'boolean') rel._locked = horaeManager.isRelationshipLocked(rel);
                     rel._userEdited = true;
                 }
             }

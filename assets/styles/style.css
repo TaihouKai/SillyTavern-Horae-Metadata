@@ -5959,7 +5959,7 @@ body .horae-context-menu {
     opacity: 1;
 }
 
-.horae-rel-edit, .horae-rel-delete {
+.horae-rel-lock, .horae-rel-edit, .horae-rel-delete {
     background: none;
     border: none;
     cursor: pointer;
@@ -5971,6 +5971,22 @@ body .horae-context-menu {
 
 .horae-rel-edit:hover { color: var(--horae-primary); }
 .horae-rel-delete:hover { color: var(--horae-danger, #ef4444); }
+.horae-rel-lock:hover, .horae-rel-lock.active { color: var(--horae-primary); }
+
+/* 锁定的关系：剧情分析不再修改 */
+.horae-rel-lock-badge {
+    color: var(--horae-primary);
+    font-size: 10px;
+    opacity: 0.8;
+}
+
+.horae-rel-lock-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
 
 /* 底部面板关系/情绪 */
 .horae-panel-relationships {

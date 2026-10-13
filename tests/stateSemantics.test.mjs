@@ -406,11 +406,11 @@ test('analyzer snapshot shows the whole relationship network; the GM only sees p
     assert.ok(!horaeManager.generateCompactPrompt(0, { audience: 'main' }).includes('伊凡→艾琳'));
 });
 
-test('hand-edited relationships are a base, not a lock: later analyses evolve them and rebuilds keep them', () => {
+test('unlocked hand-edited relationships are a base: later analyses evolve them and rebuilds keep them', () => {
     const chat = [msg('开场'), msg('嗨', { user: true }), msg('你们在酒馆。')];
     setup(chat, { sendRelationships: true });
     // 用户手动设定（或继承）的关系：消息中没有对应记录，只存在于聚合中
-    chat[0].horae_meta.relationships = [{ from: U, to: '艾琳', type: '恋人', note: '', _userEdited: true }];
+    chat[0].horae_meta.relationships = [{ from: U, to: '艾琳', type: '恋人', note: '', _userEdited: true, _locked: false }];
     horaeManager.rebuildRelationships();
     assert.equal(horaeManager.getRelationships()[0].type, '恋人', 'kept as base on rebuild');
 
@@ -421,4 +421,36 @@ test('hand-edited relationships are a base, not a lock: later analyses evolve th
     assert.equal(r.type, `恋人；本次任务中由${U}护送`, 'later analysis evolves the edited pair');
     assert.equal(r.note, '护送艾琳穿越森林');
     assert.ok(r._userEdited, 'still survives rebuilds as a base');
+});
+
+test('locked relationships ignore story analysis; legacy hand edits stay locked; unlocking lets them evolve', () => {
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('你们在酒馆。')];
+    setup(chat, { sendRelationships: true });
+    chat[0].horae_meta.relationships = [
+        { from: U, to: '艾琳', type: '恋人', note: '', _userEdited: true, _locked: true },
+        { from: U, to: '伊凡', type: '挚友', note: '', _userEdited: true },            // 旧数据：只有 _userEdited
+    ];
+    commit(chat, 2, parse('<horae>\nrel:伊凡>艾琳=兄妹\n</horae>'));                   // AI 记录，未锁定
+    const relOf = (to, from = U) => horaeManager.getRelationships().find(r => r.from === from && r.to === to);
+    assert.equal(horaeManager.isRelationshipLocked(relOf('艾琳')), true);
+    assert.equal(horaeManager.isRelationshipLocked(relOf('伊凡')), true, 'legacy hand edit = locked (original behaviour)');
+    assert.equal(horaeManager.isRelationshipLocked(relOf('艾琳', '伊凡')), false);
+
+    const idx = push(chat, '出发。', '你护送艾琳。');
+    commit(chat, idx, parse(`<horae>\nrel:${U}>艾琳=雇主\nrel:${U}>伊凡=同伴\n</horae>`));
+    horaeManager.rebuildRelationships();
+    assert.equal(relOf('艾琳').type, '恋人', 'explicit lock blocks the update');
+    assert.equal(relOf('伊凡').type, '挚友', 'legacy lock blocks the update');
+
+    // 解锁后，同一条分析结果在重建时即可生效
+    relOf('艾琳')._locked = false;
+    horaeManager.rebuildRelationships();
+    assert.equal(relOf('艾琳').type, '雇主', 'unlocked pair evolves again');
+
+    // 锁定一条 AI 记录的关系：重建后保留锁定值，后续分析不再覆盖
+    const r = relOf('艾琳', '伊凡'); r._locked = true; r._userEdited = true;
+    const idx2 = push(chat, '回家。', '伊凡和艾琳吵了一架。');
+    commit(chat, idx2, parse('<horae>\nrel:伊凡>艾琳=冷战中的兄妹\n</horae>'));
+    horaeManager.rebuildRelationships();
+    assert.equal(relOf('艾琳', '伊凡').type, '兄妹');
 });

@@ -2753,7 +2753,8 @@ class HoraeManager {
         for (const rel of newRels) {
             const idx = existing.findIndex(r => r.from === rel.from && r.to === rel.to);
             if (idx >= 0) {
-                // 手动编辑 / 继承的关系只作为基础（_userEdited 让重建时保留它），之后的剧情仍可在其上演进，不锁定
+                // 锁定的关系不随剧情分析变化；未锁定的手动编辑 / 继承关系只作为基础，之后的剧情仍可在其上演进
+                if (this.isRelationshipLocked(existing[idx])) continue;
                 existing[idx].type = rel.type;
                 if (rel.note) existing[idx].note = rel.note;
             } else {
@@ -2762,14 +2763,24 @@ class HoraeManager {
         }
     }
 
+    /**
+     * 关系是否锁定（剧情分析不再修改）。显式 _locked 优先；
+     * 旧数据只有 _userEdited 时按原版行为视为锁定（原版手动编辑即锁定）。
+     */
+    isRelationshipLocked(rel) {
+        if (!rel) return false;
+        if (typeof rel._locked === 'boolean') return rel._locked;
+        return !!rel._userEdited;
+    }
+
     /** 从所有消息重建 chat[0] 的关系网络（用于编辑/删除后回推） */
     rebuildRelationships() {
         const chat = this.getChat();
         if (!chat?.length) return;
         const firstMsg = chat[0];
         if (!firstMsg.horae_meta) firstMsg.horae_meta = createEmptyMeta();
-        // 保留用户手动编辑的关系，其余重建
-        const userEdited = (firstMsg.horae_meta.relationships || []).filter(r => r._userEdited);
+        // 保留用户手动编辑 / 锁定的关系作为基础，其余重建
+        const userEdited = (firstMsg.horae_meta.relationships || []).filter(r => r._userEdited || this.isRelationshipLocked(r));
         firstMsg.horae_meta.relationships = [...userEdited];
         for (let i = 1; i < chat.length; i++) {
             const meta = chat[i]?.horae_meta;
