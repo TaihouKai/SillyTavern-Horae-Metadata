@@ -541,7 +541,7 @@ item:emoji name(qty)|description=holder@exact location (newly obtained, or quant
 item!:... / item!!:... (important / key items, description required)
 item-:item name (consumed, lost, or no longer tracked)
 affection:NPC name=new total (NPC toward {{user}} only; only on change, first appearance, or when still missing — rule 12)
-npc:name|appearance=personality@relationship to {{user}}~gender:x~age:x~race:x~job:x (full on first appearance; later only changed fields; relationship per rule 13)\${relLine}\${moodLine}
+npc:name|appearance=personality@relationship to {{user}}~gender:x~age:x~race:x~job:x (full on first appearance; later only changed fields, but always keep "name|", e.g. npc:name|=@new relationship; relationship per rule 13)\${relLine}\${moodLine}
 agenda:date|content (new promise/plan/task)
 agenda-:content keyword (completed / invalidated)
 </horae>
@@ -599,7 +599,7 @@ item:emoji物品名(数量)|描述=持有者@精确位置（新获得，或已�
 item!:… / item!!:…（重要/关键物品，描述必填）
 item-:物品名（消耗、丢失或不再需要追踪时）
 affection:NPC名=新好感度总值（仅NPC对{{user}}，仅变化、首次登场或尚无好感度时，见第12条）
-npc:名|外貌=性格@与{{user}}的关系~性别:值~年龄:值~种族:值~职业:值（首次登场写完整；之后只写变化的字段；关系按第13条）\${relLine}\${moodLine}
+npc:名|外貌=性格@与{{user}}的关系~性别:值~年龄:值~种族:值~职业:值（首次登场写完整；之后只写变化的字段，但必须保留「名|」，如 npc:名|=@新关系；关系按第13条）\${relLine}\${moodLine}
 agenda:订立日期|内容（新的约定/计划/任务）
 agenda-:内容关键词（已完成/已失效）
 </horae>

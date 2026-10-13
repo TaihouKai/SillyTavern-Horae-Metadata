@@ -454,3 +454,38 @@ test('locked relationships ignore story analysis; legacy hand edits stay locked;
     horaeManager.rebuildRelationships();
     assert.equal(relOf('艾琳', '伊凡').type, '兄妹');
 });
+
+test('npc: lines without "|" no longer turn the whole line into the NPC name', () => {
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('食蜂操祈看着你。')];
+    setup(chat);
+    commit(chat, 2, parse('<horae>\nnpc:食蜂操祈|金发少女=傲慢@初识的人~性别:女\n</horae>'));
+    const idx = push(chat, '她想雇我。', '她提出雇佣你。');
+    commit(chat, idx, parse('<horae>\nnpc:食蜂操祈=@审讯者;雇佣提案者(提出贴身保镖雇佣)\n</horae>'));
+    const npcs = horaeManager.getLatestState().npcs;
+    assert.deepEqual(Object.keys(npcs), ['食蜂操祈']);
+    assert.equal(npcs['食蜂操祈'].relationship, '审讯者;雇佣提案者(提出贴身保镖雇佣)');
+    assert.equal(npcs['食蜂操祈'].appearance, '金发少女', 'untouched fields kept');
+    assert.equal(npcs['食蜂操祈'].gender, '女');
+
+    const p = (s) => horaeManager._parseNpcFields(s);
+    assert.deepEqual(p('艾琳=温柔@恋人'), { _name: '艾琳', personality: '温柔', relationship: '恋人' });
+    assert.deepEqual(p('艾琳@恋人~年龄:20'), { _name: '艾琳', relationship: '恋人', age: '20' });
+    assert.deepEqual(p('艾琳'), { _name: '艾琳' }, 'plain name unchanged');
+});
+
+test('repairMalformedNpcNames fixes NPC names stored by the old parser', () => {
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('食蜂操祈看着你。'), msg('继续', { user: true }), msg('她提出雇佣你。')];
+    setup(chat);
+    commit(chat, 2, parse('<horae>\nnpc:食蜂操祈|金发少女=傲慢@初识的人\n</horae>'));
+    // 模拟旧解析器写入的畸形数据
+    chat[4].horae_meta = createEmptyMeta();
+    chat[4].horae_meta.npcs = { '食蜂操祈=@审讯者;雇佣提案者(提出贴身保镖雇佣)': { last_seen: 't' } };
+    assert.equal(horaeManager.repairMalformedNpcNames(), 1);
+    assert.deepEqual(Object.keys(chat[4].horae_meta.npcs), ['食蜂操祈']);
+    assert.equal(chat[4].horae_meta.npcs['食蜂操祈'].relationship, '审讯者;雇佣提案者(提出贴身保镖雇佣)');
+    assert.equal(chat[4].horae_meta.npcs['食蜂操祈'].last_seen, 't');
+    const npcs = horaeManager.getLatestState().npcs;
+    assert.deepEqual(Object.keys(npcs), ['食蜂操祈']);
+    assert.equal(npcs['食蜂操祈'].appearance, '金发少女');
+    assert.equal(horaeManager.repairMalformedNpcNames(), 0, 'idempotent');
+});

@@ -4448,8 +4448,8 @@ function openRelationshipEditModal(editIndex = null) {
     const rels = horaeManager.getRelationships();
     const isEdit = editIndex !== null && editIndex >= 0;
     const existing = isEdit ? rels[editIndex] : { from: '', to: '', type: '', note: '' };
-    // 原版：手动编辑即锁定。已显式设置过锁定状态的关系沿用其设置
-    const lockedDefault = isEdit && typeof existing._locked === 'boolean' ? existing._locked : true;
+    // 编辑：勾选框反映该关系当前的锁定状态（与列表中的锁形按钮一致）；手动新增默认锁定
+    const lockedDefault = isEdit ? horaeManager.isRelationshipLocked(existing) : true;
 
     const modalHtml = `
         <div id="horae-edit-modal" class="horae-modal">
@@ -22087,6 +22087,12 @@ async function onChatChanged() {
                     _m._rpgConfigs._deletedStrongholds = _rpg._deletedStrongholds;
             }
         }
+
+        // ── 修复旧数据：省略「|」的 npc: 行曾被整行当作 NPC 名 ──
+        try {
+            const _npcFixed = horaeManager.repairMalformedNpcNames();
+            if (_npcFixed) console.log(`[Horae] 已修复 ${_npcFixed} 条畸形 NPC 名`);
+        } catch (e) { console.warn('[Horae] NPC 名修复失败:', e); }
 
         // ── 迁移旧数据：events 中的摘要卡片回流到 autoSummaries.summaryText ──
         // 旧版只存在 events 卡片中，没写到 autoSummaries[i].summaryText

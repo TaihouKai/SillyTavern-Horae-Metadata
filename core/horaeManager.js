@@ -2773,6 +2773,31 @@ class HoraeManager {
         return !!rel._userEdited;
     }
 
+    /**
+     * 修复旧版解析留下的畸形 NPC 名（如「食蜂操祈=@审讯者;…」被整行当作名字）：
+     * 拆出真实名字与字段，并入该楼层同名 NPC。幂等；返回修复条数。
+     */
+    repairMalformedNpcNames() {
+        const chat = this.getChat();
+        let fixed = 0;
+        for (const message of chat || []) {
+            const npcs = message?.horae_meta?.npcs;
+            if (!npcs) continue;
+            for (const badName of Object.keys(npcs)) {
+                if (badName.includes('|') || !/[=@]/.test(badName)) continue;
+                const parsed = this._parseNpcFields(badName);
+                const name = parsed._name;
+                delete parsed._name;
+                if (!name || name === badName) continue;
+                const { _name, ...badInfo } = npcs[badName] || {};
+                npcs[name] = { ...(npcs[name] || {}), ...badInfo, ...parsed };
+                delete npcs[badName];
+                fixed++;
+            }
+        }
+        return fixed;
+    }
+
     /** 从所有消息重建 chat[0] 的关系网络（用于编辑/删除后回推） */
     rebuildRelationships() {
         const chat = this.getChat();
@@ -3210,10 +3235,19 @@ class HoraeManager {
     _parseNpcFields(npcStr) {
         const info = {};
         if (!npcStr) return { _name: '' };
-        
+
         // 1. 分离扩展字段
         const tildeParts = npcStr.split('~');
         const mainPart = tildeParts[0].trim(); // 名|外貌=性格@关系
+
+        // 增量更新时模型常省略「|」：「名=性格@关系」「名=@关系」「名@关系」。名字到第一个 = 或 @ 为止
+        if (!mainPart.includes('|')) {
+            const cut = mainPart.search(/[=@]/);
+            if (cut > 0 && mainPart.substring(0, cut).trim()) {
+                const fixedMain = `${mainPart.substring(0, cut).trim()}|${mainPart.substring(cut)}`;
+                return this._parseNpcFields(fixedMain + npcStr.substring(tildeParts[0].length));
+            }
+        }
         
         for (let i = 1; i < tildeParts.length; i++) {
             const kv = tildeParts[i].trim();
