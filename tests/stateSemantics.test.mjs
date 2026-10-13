@@ -489,3 +489,24 @@ test('repairMalformedNpcNames fixes NPC names stored by the old parser', () => {
     assert.equal(npcs['食蜂操祈'].appearance, '金发少女');
     assert.equal(horaeManager.repairMalformedNpcNames(), 0, 'idempotent');
 });
+
+test('NPC relationship stays a short summary; details go to the NPC note (备注)', () => {
+    for (const p of [bg.DEFAULT_BG_PROMPT_ZH, bg.DEFAULT_BG_PROMPT_EN]) {
+        assert.match(p, /npc:[^\n]*(~备注:关系细节与近期动态|~note:relationship details and recent developments)/);
+    }
+    assert.match(bg.DEFAULT_BG_PROMPT_ZH, /只写简短的关系概括/);
+    assert.match(bg.DEFAULT_BG_PROMPT_EN, /is a SHORT summary only/);
+
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('艾琳向你微笑。')];
+    setup(chat);
+    commit(chat, 2, parse('<horae>\nnpc:艾琳|银发=温柔@恋人，曾一起逃离王都、在边境小镇共度一冬、约定春天成婚~性别:女\n</horae>'));
+    const idx = push(chat, '我们出发。', '你护送艾琳穿过森林。');
+    commit(chat, idx, parse('<horae>\nnpc:艾琳|=@恋人~备注:曾一起逃离王都、在边境小镇共度一冬；约定春天成婚；本次任务中由主角护送穿越森林\n</horae>'));
+    const n = horaeManager.getLatestState().npcs['艾琳'];
+    assert.equal(n.relationship, '恋人');
+    assert.match(n.note, /约定春天成婚；本次任务中由主角护送/);
+    assert.equal(n.appearance, '银发');
+    assert.equal(n.gender, '女');
+    // 快照中备注显示为“补充”，分析器可据此保留旧内容
+    assert.match(horaeManager.generateCompactPrompt(0, { audience: 'analyzer' }), /艾琳｜银发=温柔@恋人~性别:女~补充:曾一起逃离王都/);
+});

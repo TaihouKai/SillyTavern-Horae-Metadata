@@ -512,7 +512,9 @@ You are an independent state recorder, NOT the story author. Read ONE completed 
    - After that, start from the value in [Current State] and write the new total only when an interaction meaningfully changes their attitude: small steps for everyday interaction, big changes only for major events.
 13. Relationships evolve; they are not re-judged from scratch (applies to npc:'s "@relationship to {{user}}" and rel:'s relationship type):
    - The relationship already in [Current State] is the base; this reply only modifies it. Write the complete relationship after "existing relationship + this change", never a fresh summary of this reply alone.
-   - A lasting bond (lovers, close friends, family, rivals...) is NOT replaced by one mission, one conversation or a temporary role (bodyguard, employer, guide, teammate...). Put temporary roles in the note, or append them to the existing relationship after "; ".
+   - A lasting bond (lovers, close friends, family, rivals...) is NOT replaced by one mission, one conversation or a temporary role (bodyguard, employer, guide, teammate...). Put temporary roles in the note (npc: ~note:, rel: the note after "|").
+   - npc:'s "@relationship to {{user}}" is a SHORT summary only (e.g. "lover", "employer and childhood friend", a few words). The history of the relationship, concrete experiences and recent developments go into that NPC's ~note:. If the relationship in [Current State] is already long, move the details into ~note: in this update and keep only the summary.
+   - A written ~note: replaces the old note entirely (shown as "notes" in the snapshot): keep what still matters from the old note (including non-relationship information), then merge in the new details; skip trivial details.
    - Upgrade, downgrade or change the relationship type only when the story shows an explicit event (confession, breakup, betrayal, reconciliation, marriage...).
    - A written value replaces the old one entirely, so always write the complete current relationship; omit the line when neither the relationship nor its note changed.
    - rel:'s note holds the important RECENT shared experiences of the two. "Recent" means recent in story time by common sense (the last days to weeks), not the last few turns of dialogue: keep the parts of the old note that still matter, merge in new important events, drop what is outdated, and leave out trivial dialogue details.
@@ -541,7 +543,7 @@ item:emoji name(qty)|description=holder@exact location (newly obtained, or quant
 item!:... / item!!:... (important / key items, description required)
 item-:item name (consumed, lost, or no longer tracked)
 affection:NPC name=new total (NPC toward {{user}} only; only on change, first appearance, or when still missing — rule 12)
-npc:name|appearance=personality@relationship to {{user}}~gender:x~age:x~race:x~job:x (full on first appearance; later only changed fields, but always keep "name|", e.g. npc:name|=@new relationship; relationship per rule 13)\${relLine}\${moodLine}
+npc:name|appearance=personality@short relationship to {{user}}~gender:x~age:x~race:x~job:x~note:relationship details and recent developments (full on first appearance; later only changed fields, but always keep "name|", e.g. npc:name|=@new relationship; relationship per rule 13)\${relLine}\${moodLine}
 agenda:date|content (new promise/plan/task)
 agenda-:content keyword (completed / invalidated)
 </horae>
@@ -570,7 +572,9 @@ export const DEFAULT_BG_PROMPT_ZH = `【Horae 后台状态分析器】
    · 之后以【当前状态】中的值为基准，只在互动使其态度发生实质变化时写变化后的新总值；日常互动小幅调整，重大事件才大幅变化。
 13. 关系是逐步演进的，不是每次重新判定（适用于 npc: 的「@与{{user}}的关系」和 rel: 的关系类型）：
    · 【当前状态】中已有的关系是基础，本条回复只是修正：写“已有关系 + 本次变化”之后的完整关系，不能只依据本条回复重新概括。
-   · 长期纽带（恋人、挚友、家人、宿敌等）不会因一次任务、一段对话或临时身份（护卫、雇主、向导、队友等）而被替换；临时身份写进备注，或用“；”附在已有关系之后。
+   · 长期纽带（恋人、挚友、家人、宿敌等）不会因一次任务、一段对话或临时身份（护卫、雇主、向导、队友等）而被替换；临时身份写进备注（npc: 用 ~备注:，rel: 用「|」后的备注）。
+   · npc: 的「@与{{user}}的关系」只写简短的关系概括（如“恋人”“雇主兼青梅竹马”，约15字以内）。关系的来龙去脉、具体经历与近期动态写进该 NPC 的 ~备注:。若【当前状态】中的关系已经很长，本次更新时把细节移入 ~备注:，关系只保留概括。
+   · ~备注: 写入会整体覆盖旧备注（快照中显示为“补充”）：保留旧备注中仍然重要的内容（包括非关系类的信息），再并入新的细节；不写琐碎细节。
    · 只有剧情中发生明确事件（表白、分手、背叛、和解、结婚等）时，才能升级、降级或改变关系类型。
    · 写入会整体覆盖旧值，所以每次都写完整的当前关系；关系与备注都没有变化时不写该行。
    · rel: 的备注写两人之间“近期”的重要共同经历。“近期”按故事内的常识理解（最近几天到几周），不是最近几轮对话：保留旧备注中仍然相关的内容，并入新的重要事件，删去已经过时的，不写琐碎的对话细节。
@@ -599,7 +603,7 @@ item:emoji物品名(数量)|描述=持有者@精确位置（新获得，或已�
 item!:… / item!!:…（重要/关键物品，描述必填）
 item-:物品名（消耗、丢失或不再需要追踪时）
 affection:NPC名=新好感度总值（仅NPC对{{user}}，仅变化、首次登场或尚无好感度时，见第12条）
-npc:名|外貌=性格@与{{user}}的关系~性别:值~年龄:值~种族:值~职业:值（首次登场写完整；之后只写变化的字段，但必须保留「名|」，如 npc:名|=@新关系；关系按第13条）\${relLine}\${moodLine}
+npc:名|外貌=性格@与{{user}}的关系概括~性别:值~年龄:值~种族:值~职业:值~备注:关系细节与近期动态（首次登场写完整；之后只写变化的字段，但必须保留「名|」，如 npc:名|=@新关系；关系按第13条）\${relLine}\${moodLine}
 agenda:订立日期|内容（新的约定/计划/任务）
 agenda-:内容关键词（已完成/已失效）
 </horae>
