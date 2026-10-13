@@ -806,9 +806,10 @@ class HoraeManager {
                 }
             }
             
-            // 关系网络（仅在场角色相关的关系，从 chat[0] 读取，零AI输出token）
+            // 关系网络（从 chat[0] 读取，零AI输出token）。主模型只看在场角色相关的关系；
+            // 分析器看全部：本条回复中新登场的角色也要以已有关系为基础演进，而不是重新判定
             if (this.settings?.sendRelationships) {
-                const rels = this.getRelationshipsForCharacters(presentChars);
+                const rels = audience === 'analyzer' ? this.getRelationships() : this.getRelationshipsForCharacters(presentChars);
                 if (rels.length > 0) {
                     lines.push(`\n[${L('关系网络','Relationship Network','関係ネットワーク','관계 네트워크','Сеть отношений')}]`);
                     for (const r of rels) {
@@ -2752,7 +2753,7 @@ class HoraeManager {
         for (const rel of newRels) {
             const idx = existing.findIndex(r => r.from === rel.from && r.to === rel.to);
             if (idx >= 0) {
-                if (existing[idx]._userEdited) continue;
+                // 手动编辑 / 继承的关系只作为基础（_userEdited 让重建时保留它），之后的剧情仍可在其上演进，不锁定
                 existing[idx].type = rel.type;
                 if (rel.note) existing[idx].note = rel.note;
             } else {

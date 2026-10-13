@@ -378,3 +378,47 @@ test('analyzer default prompts say the speaker may be a narrator and must not ab
     assert.match(bg.DEFAULT_BG_PROMPT_ZH, /\{\{speaker\}\}」只是写出这条回复的角色卡名称/);
     assert.match(bg.DEFAULT_BG_PROMPT_EN, /"\{\{speaker\}\}" is only the name of the card/);
 });
+
+test('analyzer prompts: affection is a judgment with starting values; relationships evolve from the existing base', () => {
+    const zh = bg.DEFAULT_BG_PROMPT_ZH, en = bg.DEFAULT_BG_PROMPT_EN;
+    assert.doesNotMatch(zh, /虚构时间、服装、好感度/, 'rule 3 no longer forbids affection');
+    assert.doesNotMatch(en, /time, outfit, affection score/);
+    assert.match(zh, /陌生0-20 \/ 熟人30-50 \/ 朋友50-70 \/ 恋人70-90/);
+    assert.match(en, /stranger 0-20 \/ acquaintance 30-50 \/ friend 50-70 \/ lover 70-90/);
+    assert.match(zh, /已有的关系是基础，本条回复只是修正/);
+    assert.match(zh, /临时身份（护卫、雇主、向导、队友等）/);
+    assert.match(zh, /“近期”按故事内的常识理解/);
+    assert.match(en, /The relationship already in \[Current State\] is the base/);
+    assert.match(en, /recent in story time by common sense/);
+});
+
+test('analyzer snapshot shows the whole relationship network; the GM only sees present characters', () => {
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('你们在酒馆。')];
+    setup(chat, { sendRelationships: true });
+    commit(chat, 2, parse(`<horae>\ncharacters:${U}\nrel:${U}>艾琳=恋人|一起逃离王都\n</horae>`));
+    const an = horaeManager.generateCompactPrompt(0, { audience: 'analyzer' });
+    const gm = horaeManager.generateCompactPrompt(0, { audience: 'main' });
+    assert.ok(an.includes(`${U}→艾琳: 恋人(一起逃离王都)`), an);
+    assert.ok(gm.includes(`${U}→艾琳: 恋人`), 'GM sees relationships of present characters');
+    // 两个都不在场的角色：只有分析器看得到
+    commit(chat, 2, parse(`<horae>\ncharacters:${U}\nrel:伊凡>艾琳=兄妹\n</horae>`));
+    assert.ok(horaeManager.generateCompactPrompt(0, { audience: 'analyzer' }).includes('伊凡→艾琳: 兄妹'));
+    assert.ok(!horaeManager.generateCompactPrompt(0, { audience: 'main' }).includes('伊凡→艾琳'));
+});
+
+test('hand-edited relationships are a base, not a lock: later analyses evolve them and rebuilds keep them', () => {
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('你们在酒馆。')];
+    setup(chat, { sendRelationships: true });
+    // 用户手动设定（或继承）的关系：消息中没有对应记录，只存在于聚合中
+    chat[0].horae_meta.relationships = [{ from: U, to: '艾琳', type: '恋人', note: '', _userEdited: true }];
+    horaeManager.rebuildRelationships();
+    assert.equal(horaeManager.getRelationships()[0].type, '恋人', 'kept as base on rebuild');
+
+    const idx = push(chat, '我们出发吧。', '你护送艾琳穿过森林。');
+    commit(chat, idx, parse(`<horae>\nrel:${U}>艾琳=恋人；本次任务中由${U}护送|护送艾琳穿越森林\n</horae>`));
+    horaeManager.rebuildRelationships();
+    const r = horaeManager.getRelationships().find(x => x.from === U && x.to === '艾琳');
+    assert.equal(r.type, `恋人；本次任务中由${U}护送`, 'later analysis evolves the edited pair');
+    assert.equal(r.note, '护送艾琳穿越森林');
+    assert.ok(r._userEdited, 'still survives rebuilds as a base');
+});
