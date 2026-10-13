@@ -4,7 +4,7 @@
 
 ![Image](https://github.com/SenriYuki/SillyTavern-Horae/blob/main/HoraeLogo.jpg)
 
-> **This fork:** adds a **Background / Metadata Only** mode — the GM writes only the story, Horae extracts state in the background via the Auxiliary API and saves it to metadata only (never into message text). See [docs/METADATA_MODE.md](docs/METADATA_MODE.md).
+> **This fork:** adds a **Background / Metadata Only** mode — the GM writes only the story, Horae extracts state in the background via the Auxiliary API and saves it to metadata only (never into message text). See [docs/METADATA_MODE.md](docs/METADATA_MODE.md). It also adds an opt-in **Persona starting state**: per-Persona bars, skills, possessions and strongholds applied once before the first story request of a new chat. See [docs/PERSONA_BOOTSTRAP.md](docs/PERSONA_BOOTSTRAP.md).
 
 > *Horae — Greek goddesses who governed the orderly progression of time*
 

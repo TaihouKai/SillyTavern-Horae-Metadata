@@ -4,7 +4,7 @@
 
 ![Image](https://github.com/SenriYuki/SillyTavern-Horae/blob/main/HoraeLogo.jpg)
 
-> **本分支：** 新增「后台分析 / 仅元数据」模式——GM 只写剧情，Horae 通过辅助 API 在后台提取状态并只保存到元数据（绝不写入正文）。详见 [docs/METADATA_MODE.md](docs/METADATA_MODE.md)。
+> **本分支：** 新增「后台分析 / 仅元数据」模式——GM 只写剧情，Horae 通过辅助 API 在后台提取状态并只保存到元数据（绝不写入正文）。详见 [docs/METADATA_MODE.md](docs/METADATA_MODE.md)。另新增可选的「Persona 开局状态」：按 Persona 配置属性条、技能、持有物与据点，在新聊天第一次剧情请求前一次性写入。详见 [docs/PERSONA_BOOTSTRAP.md](docs/PERSONA_BOOTSTRAP.md)。
 
 > *Horae（荷赖）— 希腊神话中掌管时序的女神*
 

@@ -1510,5 +1510,165 @@
             "bgPromptPlaceholder": "Empty = built-in default. Placeholders: {{state}} {{previousUserMessage}} {{content}} {{speaker}} {{modules}} {{user}} {{char}}",
             "bgPromptReset": "Reset to default"
         }
+    },
+    "persona": {
+        "title": "Persona starting state",
+        "editorTitle": "Persona starting state — template",
+        "repairTitle": "Apply missing starting entries to this chat",
+        "chars": "chars",
+        "state": {
+            "noChat": "No chat open",
+            "initialized": "Initialized",
+            "inherited": "Inherited (carried over)",
+            "repaired": "Repaired (entries added at a later boundary)",
+            "cleared": "Cleared by user (no automatic restore)",
+            "noProfile": "No starting profile for this Persona",
+            "disabled": "Profile exists but is not enabled",
+            "invalid": "Profile has errors",
+            "prereqMissing": "Prerequisites missing",
+            "failed": "Initialization failed (retry by sending again)",
+            "ready": "Ready — applies before the first story request",
+            "notEligible": "Not eligible (chat already has story)"
+        },
+        "detail": {
+            "record": "owner {{owner}} · template rev {{rev}} · {{at}}",
+            "repairs": "{{n}} repair(s)",
+            "notEligible": "Use “Apply missing entries” to add selected entries at the current point.",
+            "mismatch": "This chat belongs to {{owner}}; the active Persona is {{active}}. Nothing is transferred or re-initialized."
+        },
+        "prereq": {
+            "injectContext": "Horae enabled + context injection",
+            "rpgMode": "RPG mode",
+            "sendRpgBars": "Status bars module",
+            "sendRpgSkills": "Skills module",
+            "sendRpgStronghold": "Stronghold module",
+            "sendItems": "Send items"
+        },
+        "reason": {
+            "noProfile": "No starting profile for the active Persona",
+            "invalid": "The profile has {{n}} error(s)",
+            "prereq": "Required switches are off",
+            "noPersona": "No active Persona",
+            "noOwner": "Cannot resolve the player name",
+            "chatChanged": "Chat or Persona changed during initialization; nothing was written",
+            "saveFailed": "Saving the chat failed"
+        },
+        "btn": {
+            "edit": "Edit starting profile",
+            "initNow": "Initialize this chat now",
+            "repair": "Apply missing entries…",
+            "undoRepair": "Undo last repair",
+            "add": "Add",
+            "remove": "Remove",
+            "preset": "Add HP/MP/SP 100/100 preset",
+            "enablePrereq": "Enable required switches",
+            "validate": "Validate / preview",
+            "save": "Save",
+            "close": "Close",
+            "applySelected": "Add selected entries",
+            "export": "Export JSON",
+            "import": "Import JSON"
+        },
+        "f": {
+            "enabled": "Use this profile to initialize new chats",
+            "barName": "Display name",
+            "current": "Current",
+            "max": "Max",
+            "desc": "Description",
+            "fullDesc": "Full description (kept verbatim)",
+            "skillName": "Skill name",
+            "level": "Level (optional)",
+            "itemName": "Item name",
+            "quantity": "Quantity",
+            "unit": "Unit",
+            "holder": "Holder (empty = this player)",
+            "location": "Location (optional)",
+            "impNormal": "Normal",
+            "impImportant": "Important",
+            "impCritical": "Critical",
+            "shName": "Stronghold / room name",
+            "noParent": "(top level)"
+        },
+        "sec": {
+            "bars": "Resource bars",
+            "skills": "Skills",
+            "items": "Possessions (normal item system)",
+            "strongholds": "Strongholds"
+        },
+        "hint": {
+            "active": "Active Persona",
+            "notActive": "Not the active Persona",
+            "futureOnly": "Editing a template only affects future new chats. Chats that are already initialized keep their frozen baseline.",
+            "chatStatus": "Current chat",
+            "repair": "Existing values for {{owner}} are kept. Only entries that are genuinely missing can be selected; they are added at the current point of the story, not retroactively."
+        },
+        "kind": {
+            "bar": "Bar",
+            "skill": "Skill",
+            "item": "Item",
+            "stronghold": "Base"
+        },
+        "repair": {
+            "missing": "missing",
+            "present": "already present — kept",
+            "conflict": "present with a different holder — kept",
+            "removed": "previously removed/consumed — excluded"
+        },
+        "confirm": {
+            "reinit": "Re-initialize this chat from the Persona template? The baseline is applied before the first message.",
+            "undoRepair": "Remove the entries added by the last repair?"
+        },
+        "toast": {
+            "initFailed": "Persona initialization failed",
+            "alreadyInit": "This chat is already initialized",
+            "notFresh": "This chat already has story; use “Apply missing entries” instead",
+            "initDone": "Persona starting state applied",
+            "nothingSelected": "Nothing selected",
+            "repairDone": "{{n}} entr(y/ies) added at the current point",
+            "saved": "Saved (revision {{rev}})",
+            "saveInvalid": "Fix the errors before saving",
+            "valid": "Profile is valid",
+            "imported": "Imported — review and save"
+        },
+        "err": {
+            "notObject": "Not a profile object",
+            "profileEmpty": "The profile is empty",
+            "barKeyMissing": "Bar key is required",
+            "barKeyLowercased": "Key “{{from}}” was normalized to “{{to}}”",
+            "barKeyUnsafe": "Key “{{key}}” is not allowed",
+            "barKeyReserved": "Key “{{key}}” is reserved by the Horae protocol",
+            "barKeyInvalid": "Key “{{key}}” must start with a letter and use a–z, 0–9, _ (max 10)",
+            "barKeyDuplicate": "Duplicate bar key “{{key}}”",
+            "barCurrentInvalid": "{{key}}: current value “{{value}}” must be a whole number ≥ 0",
+            "barMaxInvalid": "{{key}}: max “{{value}}” must be a whole number",
+            "barMaxZero": "{{key}}: max must be greater than 0",
+            "barCurrentOverMax": "{{key}}: current {{current}} is greater than max {{max}}",
+            "barNameMultiline": "{{key}}: display name must be one line",
+            "barColorInvalid": "{{key}}: invalid color “{{value}}”",
+            "skillNameMissing": "Skill name is required",
+            "skillNameMultiline": "Skill name must be one line",
+            "skillDuplicate": "Duplicate skill “{{name}}”",
+            "skillLevelMultiline": "{{name}}: level must be one line",
+            "itemNameMissing": "Item name is required",
+            "itemNameMultiline": "Item name must be one line",
+            "itemNameHasQuantity": "“{{name}}” ends with a quantity; use the Quantity/Unit fields instead",
+            "itemQuantityInvalid": "{{name}}: quantity “{{value}}” must be a whole number ≥ 1",
+            "itemUnitInvalid": "{{name}}: unit “{{value}}” is not supported",
+            "itemDuplicate": "“{{name}}” cannot be distinguished from “{{other}}” by the item system",
+            "itemImportanceInvalid": "{{name}}: invalid importance",
+            "itemFieldMultiline": "{{name}}: holder/location/icon must be one line",
+            "shNameMissing": "Stronghold name is required",
+            "shNameInvalid": "“{{name}}”: name must be one line and must not contain “>”",
+            "shIdInvalid": "{{name}}: invalid id",
+            "shIdDuplicate": "{{name}}: duplicate id",
+            "shLevelInvalid": "{{name}}: level “{{value}}” must be a whole number",
+            "shParentMissing": "{{name}}: parent “{{parent}}” does not exist",
+            "shCycle": "{{name}}: parent chain forms a cycle",
+            "shSiblingDuplicate": "Two strongholds named “{{name}}” under the same parent",
+            "shParentNotSelected": "{{name}}: select its parent as well",
+            "importNotJson": "The file is not valid JSON",
+            "importNotProfile": "The file is not a Horae Persona profile",
+            "importNewerSchema": "The file uses a newer profile format"
+        }
     }
 }

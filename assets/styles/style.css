@@ -8714,3 +8714,57 @@ body .horae-context-menu {
     display: none !important;
 }
 
+
+/* ===== Persona 开局状态 ===== */
+.horae-persona-status {
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128,128,128,.35));
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    font-size: 0.9em;
+}
+.horae-persona-status-head { font-weight: 600; margin-bottom: 4px; }
+.horae-persona-status-line[data-state="failed"],
+.horae-persona-status-line[data-state="invalid"],
+.horae-persona-status-line[data-state="prereqMissing"] { color: #ef4444; }
+.horae-persona-status-line[data-state="initialized"],
+.horae-persona-status-line[data-state="inherited"],
+.horae-persona-status-line[data-state="ready"] { color: #22c55e; }
+.horae-persona-status-detail { opacity: .8; font-weight: normal; }
+.horae-persona-mismatch { color: #f59e0b; margin-top: 4px; }
+.horae-persona-status-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.horae-pp-modal { max-width: 760px; width: 95vw; }
+.horae-pp-modal .horae-modal-body { max-height: 70vh; overflow-y: auto; }
+.horae-pp-persona { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+.horae-pp-avatar { width: 48px; height: 48px; border-radius: 50%; object-fit: cover; }
+.horae-pp-persona-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.horae-pp-hint { font-size: .85em; opacity: .8; margin: 2px 0; }
+.horae-pp-enable { display: flex; gap: 6px; align-items: center; font-weight: 600; margin: 6px 0; }
+.horae-pp-prereq { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; font-size: .85em; }
+.horae-pp-prereq .ok { color: #22c55e; }
+.horae-pp-prereq .bad { color: #ef4444; }
+.horae-pp-section { margin: 8px 0; border-top: 1px solid var(--SmartThemeBorderColor, rgba(128,128,128,.3)); padding-top: 6px; }
+.horae-pp-section summary { cursor: pointer; font-weight: 600; }
+.horae-pp-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
+.horae-pp-block { flex-direction: column; align-items: stretch; padding: 6px; border-radius: 6px; background: rgba(128,128,128,.08); }
+.horae-pp-line { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.horae-pp-row input, .horae-pp-row select, .horae-pp-row textarea { min-width: 0; }
+.horae-pp-row textarea { width: 100%; resize: vertical; }
+.horae-pp-key { width: 70px; }
+.horae-pp-name { width: 90px; }
+.horae-pp-num { width: 56px; }
+.horae-pp-unit { width: 50px; }
+.horae-pp-icon { width: 40px; }
+.horae-pp-grow { flex: 1 1 120px; }
+.horae-pp-del { background: none; border: none; color: inherit; cursor: pointer; opacity: .7; }
+.horae-pp-sec-actions { display: flex; gap: 6px; margin-top: 4px; }
+.horae-pp-result ul { margin: 6px 0; padding-left: 18px; font-size: .85em; }
+.horae-pp-errors { color: #ef4444; }
+.horae-pp-warn { color: #f59e0b; }
+.horae-pp-ok { color: #22c55e; font-weight: 600; }
+.horae-pp-footer { flex-wrap: wrap; gap: 6px; }
+.horae-pp-repair-row { display: flex; gap: 6px; align-items: center; padding: 3px 0; font-size: .9em; }
+.horae-pp-repair-row[data-status="present"], .horae-pp-repair-row[data-status="removed"], .horae-pp-repair-row[data-status="conflict"] { opacity: .6; }
+.horae-pp-repair-kind { min-width: 48px; opacity: .8; }
+.horae-pp-repair-label { flex: 1; }
+.horae-pp-repair-status { font-size: .85em; opacity: .85; }

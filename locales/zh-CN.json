@@ -1507,5 +1507,165 @@
             "bgPromptPlaceholder": "留空 = 内置默认。可用占位符：{{state}} {{previousUserMessage}} {{content}} {{speaker}} {{modules}} {{user}} {{char}}",
             "bgPromptReset": "恢复默认"
         }
+    },
+    "persona": {
+        "title": "Persona 开局状态",
+        "editorTitle": "Persona 开局状态模板",
+        "repairTitle": "为本聊天补录缺失的开局条目",
+        "chars": "字",
+        "state": {
+            "noChat": "未打开聊天",
+            "initialized": "已初始化",
+            "inherited": "已继承（携带至新对话）",
+            "repaired": "已补录（在后续边界添加了条目）",
+            "cleared": "已被用户清空（不会自动恢复）",
+            "noProfile": "当前 Persona 没有开局模板",
+            "disabled": "已有模板但未启用",
+            "invalid": "模板有错误",
+            "prereqMissing": "缺少必需开关",
+            "failed": "初始化失败（再次发送即可重试）",
+            "ready": "就绪——将在第一次剧情请求前应用",
+            "notEligible": "不符合条件（本聊天已有剧情）"
+        },
+        "detail": {
+            "record": "玩家 {{owner}} · 模板修订 {{rev}} · {{at}}",
+            "repairs": "已补录 {{n}} 次",
+            "notEligible": "可用「补录缺失条目」在当前位置添加选中的条目。",
+            "mismatch": "本聊天属于 {{owner}}，当前 Persona 为 {{active}}。不会转移物品或重新初始化。"
+        },
+        "prereq": {
+            "injectContext": "Horae 已启用 + 上下文注入",
+            "rpgMode": "RPG 模式",
+            "sendRpgBars": "属性条模块",
+            "sendRpgSkills": "技能模块",
+            "sendRpgStronghold": "据点模块",
+            "sendItems": "发送物品"
+        },
+        "reason": {
+            "noProfile": "当前 Persona 没有开局模板",
+            "invalid": "模板有 {{n}} 处错误",
+            "prereq": "必需开关未开启",
+            "noPersona": "没有当前 Persona",
+            "noOwner": "无法确定玩家名",
+            "chatChanged": "初始化期间聊天或 Persona 已切换，未写入任何内容",
+            "saveFailed": "保存聊天失败"
+        },
+        "btn": {
+            "edit": "编辑开局模板",
+            "initNow": "立即初始化本聊天",
+            "repair": "补录缺失条目…",
+            "undoRepair": "撤销上次补录",
+            "add": "添加",
+            "remove": "移除",
+            "preset": "添加 HP/MP/SP 100/100 预设",
+            "enablePrereq": "开启必需开关",
+            "validate": "校验 / 预览",
+            "save": "保存",
+            "close": "关闭",
+            "applySelected": "添加选中条目",
+            "export": "导出 JSON",
+            "import": "导入 JSON"
+        },
+        "f": {
+            "enabled": "用此模板初始化新聊天",
+            "barName": "显示名",
+            "current": "当前值",
+            "max": "上限",
+            "desc": "说明",
+            "fullDesc": "完整描述（原样保留）",
+            "skillName": "技能名",
+            "level": "等级（可空）",
+            "itemName": "物品名",
+            "quantity": "数量",
+            "unit": "单位",
+            "holder": "持有者（空 = 本玩家）",
+            "location": "位置（可空）",
+            "impNormal": "普通",
+            "impImportant": "重要",
+            "impCritical": "关键",
+            "shName": "据点 / 房间名",
+            "noParent": "（顶层）"
+        },
+        "sec": {
+            "bars": "属性条",
+            "skills": "技能",
+            "items": "持有物（普通物品系统）",
+            "strongholds": "据点"
+        },
+        "hint": {
+            "active": "当前 Persona",
+            "notActive": "不是当前 Persona",
+            "futureOnly": "编辑模板只影响以后的新聊天；已初始化的聊天保留其冻结基线。",
+            "chatStatus": "当前聊天",
+            "repair": "{{owner}} 的现有数值保持不变。只有确实缺失的条目可以勾选，并在剧情的当前位置添加，而不是追溯到开头。"
+        },
+        "kind": {
+            "bar": "属性条",
+            "skill": "技能",
+            "item": "物品",
+            "stronghold": "据点"
+        },
+        "repair": {
+            "missing": "缺失",
+            "present": "已存在——保留",
+            "conflict": "已存在但持有者不同——保留",
+            "removed": "曾被移除/消耗——排除"
+        },
+        "confirm": {
+            "reinit": "用 Persona 模板重新初始化本聊天？基线将应用于第一条消息之前。",
+            "undoRepair": "移除上次补录添加的条目？"
+        },
+        "toast": {
+            "initFailed": "Persona 初始化失败",
+            "alreadyInit": "本聊天已初始化",
+            "notFresh": "本聊天已有剧情，请使用「补录缺失条目」",
+            "initDone": "已应用 Persona 开局状态",
+            "nothingSelected": "没有选中任何条目",
+            "repairDone": "已在当前位置添加 {{n}} 个条目",
+            "saved": "已保存（修订 {{rev}}）",
+            "saveInvalid": "请先修正错误再保存",
+            "valid": "模板有效",
+            "imported": "已导入——请检查后保存"
+        },
+        "err": {
+            "notObject": "不是模板对象",
+            "profileEmpty": "模板为空",
+            "barKeyMissing": "必须填写属性条键",
+            "barKeyLowercased": "键「{{from}}」已规范为「{{to}}」",
+            "barKeyUnsafe": "键「{{key}}」不允许使用",
+            "barKeyReserved": "键「{{key}}」是 Horae 协议保留字",
+            "barKeyInvalid": "键「{{key}}」须以字母开头，仅含 a–z、0–9、_（最多 10 个字符）",
+            "barKeyDuplicate": "属性条键「{{key}}」重复",
+            "barCurrentInvalid": "{{key}}：当前值「{{value}}」必须是 ≥0 的整数",
+            "barMaxInvalid": "{{key}}：上限「{{value}}」必须是整数",
+            "barMaxZero": "{{key}}：上限必须大于 0",
+            "barCurrentOverMax": "{{key}}：当前值 {{current}} 大于上限 {{max}}",
+            "barNameMultiline": "{{key}}：显示名必须是单行",
+            "barColorInvalid": "{{key}}：颜色「{{value}}」无效",
+            "skillNameMissing": "必须填写技能名",
+            "skillNameMultiline": "技能名必须是单行",
+            "skillDuplicate": "技能「{{name}}」重复",
+            "skillLevelMultiline": "{{name}}：等级必须是单行",
+            "itemNameMissing": "必须填写物品名",
+            "itemNameMultiline": "物品名必须是单行",
+            "itemNameHasQuantity": "「{{name}}」末尾带有数量，请改用数量/单位字段",
+            "itemQuantityInvalid": "{{name}}：数量「{{value}}」必须是 ≥1 的整数",
+            "itemUnitInvalid": "{{name}}：不支持单位「{{value}}」",
+            "itemDuplicate": "物品系统无法区分「{{name}}」与「{{other}}」",
+            "itemImportanceInvalid": "{{name}}：重要度无效",
+            "itemFieldMultiline": "{{name}}：持有者/位置/图标必须是单行",
+            "shNameMissing": "必须填写据点名",
+            "shNameInvalid": "「{{name}}」：名称须为单行且不能含「>」",
+            "shIdInvalid": "{{name}}：id 无效",
+            "shIdDuplicate": "{{name}}：id 重复",
+            "shLevelInvalid": "{{name}}：等级「{{value}}」必须是整数",
+            "shParentMissing": "{{name}}：父节点「{{parent}}」不存在",
+            "shCycle": "{{name}}：父子关系形成循环",
+            "shSiblingDuplicate": "同一父节点下有两个「{{name}}」",
+            "shParentNotSelected": "{{name}}：请同时勾选其父据点",
+            "importNotJson": "文件不是有效的 JSON",
+            "importNotProfile": "文件不是 Horae Persona 模板",
+            "importNewerSchema": "文件使用了更新的模板格式"
+        }
     }
 }

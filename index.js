@@ -9,11 +9,16 @@
 import { renderExtensionTemplateAsync, getContext, extension_settings } from '/scripts/extensions.js';
 import { getSlideToggleOptions, saveSettingsDebounced, eventSource, event_types, doNewChat } from '/script.js';
 import { slideToggle } from '/lib.js';
+import * as stScriptModule from '/script.js';
+import * as stPersonasModule from '/scripts/personas.js';
+import * as stPowerUserModule from '/scripts/power-user.js';
 
 import { horaeManager, createEmptyMeta, getItemBaseName } from './core/horaeManager.js';
 import { vectorManager } from './core/vectorManager.js';
 import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH } from './core/bgAnalysis.js';
 import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate } from './utils/timeUtils.js';
+import { PB_META_KEY } from './core/personaBootstrap.js';
+import { createPersonaController } from './core/personaController.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
 import { initPromptDefaults, ensurePromptDefaults, ensurePresetPrompts, getPromptDefaultSync, getPresetPromptsSync, BUILTIN_PRESET_IDS } from './core/promptDefaults.js';
 
@@ -134,6 +139,8 @@ const DEFAULT_SETTINGS = {
     bgWaitBeforeSend: true,    // 发送前等待未完成的后台分析，保证下一回合看到最新状态
     bgWaitTimeoutSec: 60,      // 等待上限（秒），超时后照常发送
     customBgAnalysisPrompt: '', // 后台分析提示词（空 = 内置默认）
+    // Persona 开局状态模板（按原生 Persona 头像键绑定；运行时战役数值不写回这里）
+    personaProfiles: null,
     autoParse: true,
     autoFillPrevTimelineOnSend: false, // 发送前自动补全上一条AI消息的时间线（默认关闭，避免静默误写历史）
     injectContext: true,
@@ -1529,6 +1536,13 @@ function _publishHoraeApi() {
             isBusy: () => bgAnalyzer.hasPending(_bgChatKey()),
             waitForIdle: (timeoutMs = 60000) => bgAnalyzer.waitForIdle(timeoutMs, _bgChatKey()),
             reanalyze: (messageIndex) => bgReanalyzeMessage(messageIndex),
+        }),
+        // Persona 开局状态（只读查询；模板编辑经 UI）
+        persona: Object.freeze({
+            getStatus: () => { const s = personaController.chatStatus(); return { state: s.state, mismatch: s.mismatch, activeKey: s.activeKey, reason: s.reason || '' }; },
+            getRecord: () => { const r = personaController.getRecord(); return r ? JSON.parse(JSON.stringify(r)) : null; },
+            getProfile: (personaKey) => { const p = personaController.getProfile(personaKey || _pbActivePersonaKey()); return p ? JSON.parse(JSON.stringify(p)) : null; },
+            openEditor: (personaKey) => personaController.openEditor(personaKey),
         }),
         registerPort: registerHoraePort,
         unregisterPort: unregisterHoraePort,
@@ -7185,13 +7199,13 @@ function pickMostSevereStatus(dedupedList) {
 
 /** 根据配置获取属性条颜色 */
 function getRpgBarColor(key) {
-    const cfg = (settings.rpgBarConfig || []).find(b => b.key === key);
+    const cfg = horaeManager.getEffectiveBarConfig().find(b => b.key === key);
     return cfg?.color || '#6366f1';
 }
 
 /** 根据配置获取属性条显示名（用户自定义名 > AI标签 > 默认key大写） */
 function getRpgBarName(key, aiLabel) {
-    const cfg = (settings.rpgBarConfig || []).find(b => b.key === key);
+    const cfg = horaeManager.getEffectiveBarConfig().find(b => b.key === key);
     const cfgName = cfg?.name;
     if (cfgName && cfgName !== key.toUpperCase()) return cfgName;
     return aiLabel || cfgName || key.toUpperCase();
@@ -7599,7 +7613,7 @@ function updateRpgDisplay() {
     {
         const stateNpcs = horaeManager.getLatestState()?.npcs || {};
         for (const name of [...allNames]) {
-            if (name !== _uoUserName && !stateNpcs[name]) allNames.delete(name);
+            if (name !== _uoUserName && name !== horaeManager.getBootstrapOwner() && !stateNpcs[name]) allNames.delete(name);
         }
     }
 
@@ -9744,11 +9758,16 @@ function _matchPresentChars(present, rpg) {
  */
 function _hudPresentChars(messageIndex) {
     const meta = horaeManager.getMessageMeta(messageIndex);
-    const own = meta?.scene?.characters_present || [];
-    if (own.length > 0 || !_isMetadataMode()) return own;
-    const chat = horaeManager.getChat();
-    const skip = Math.max(0, (chat?.length || 0) - messageIndex - 1);
-    return horaeManager.getLatestState(skip)?.scene?.characters_present || [];
+    let own = meta?.scene?.characters_present || [];
+    if (own.length === 0 && _isMetadataMode()) {
+        const chat = horaeManager.getChat();
+        const skip = Math.max(0, (chat?.length || 0) - messageIndex - 1);
+        own = horaeManager.getLatestState(skip)?.scene?.characters_present || [];
+    }
+    // 已初始化的玩家：即使在场名单尚未建立或未列出，也显示其状态（不虚构 NPC / 场景）
+    const pbOwner = horaeManager.getBootstrapOwner();
+    if (pbOwner && !own.includes(pbOwner)) own = [...own, pbOwner];
+    return own;
 }
 
 function renderRpgHud(messageEl, messageIndex) {
@@ -9824,9 +9843,9 @@ function _buildRpgSnapshotMap(chat) {
         return false;
     };
 
-    for (let i = 0; i < chat.length; i++) {
-        const changes = chat[i]?.horae_meta?._rpgChanges;
-        if (changes && i > 0) {
+    // 与 getRpgStateAt / rebuildRpgData 相同的时间线语义：开局基线 → 各楼层增量（含第 0 条）
+    const steps = horaeManager._baselineSteps();
+    const applyChanges = (changes, i) => {
             for (const [raw, bd] of Object.entries(changes.bars || {})) {
                 const o = resolve(raw);
                 if (!acc.bars[o]) acc.bars[o] = {};
@@ -9839,7 +9858,7 @@ function _buildRpgSnapshotMap(chat) {
                 const o = resolve(sk.owner);
                 if (!acc.skills[o]) acc.skills[o] = [];
                 const idx = acc.skills[o].findIndex(s => s.name === sk.name);
-                if (idx >= 0) { if (sk.level) acc.skills[o][idx].level = sk.level; if (sk.desc) acc.skills[o][idx].desc = sk.desc; }
+                if (idx >= 0) { if (sk.level != null) acc.skills[o][idx].level = sk.level; if (sk.desc != null) acc.skills[o][idx].desc = sk.desc; }
                 else acc.skills[o].push({ name: sk.name, level: sk.level, desc: sk.desc });
             }
             for (const sk of (changes.removedSkills || [])) {
@@ -9867,7 +9886,13 @@ function _buildRpgSnapshotMap(chat) {
                     acc.currency[o][c.name] = c.value;
                 }
             }
-        }
+    };
+    const applySteps = (at) => { for (const s of steps.get(at) || []) applyChanges(s.rpgChanges, -1); };
+    applySteps(-1);
+    for (let i = 0; i < chat.length; i++) {
+        const changes = chat[i]?.horae_meta?._rpgChanges;
+        if (changes) applyChanges(changes, i);
+        applySteps(i);
         const snap = JSON.parse(JSON.stringify(acc));
         snap.currencyConfig = curConfig;
         map.set(i, snap);
@@ -9918,6 +9943,7 @@ function refreshAllDisplays() {
     updateRpgDisplay();
     updateTokenCounter();
     refreshHoraePorts();
+    try { personaController.renderStatus(); } catch (_) { /* 初始化前忽略 */ }
 }
 
 /** chat[0] 上的全局键——无法由 rebuild 系列函数重建，需在 meta 重置时保留 */
@@ -19706,6 +19732,14 @@ async function createNewChatWithCarryover() {
         }
     }
 
+    // 继承基线：携带边界之前的有效状态（含源聊天的开局基线）；被携带楼层的增量在其上重放，二者不重叠
+    let inheritedRecord = null;
+    try {
+        inheritedRecord = personaController.captureInheritedBaseline(sourceChat.length, carryStart);
+    } catch (err) {
+        console.warn('[Horae][Persona] 构建继承基线失败:', err);
+    }
+
     try {
         await getContext().saveChat();
         await doNewChat({ deleteCurrentChat: false });
@@ -19722,6 +19756,8 @@ async function createNewChatWithCarryover() {
         // 标记整条种子楼层：阻止向量索引/结构化命中/召回结果命中 chat[0]
         // 时间线侧仍按 events[i]._carryoverSeed 走 banner 折叠路径，不受此 flag 影响
         seedMeta._carryoverSeed = true;
+        // 新聊天标记为「继承」：不会再套用 Persona 开局模板；物品/属性条/技能/状态由继承基线提供
+        if (inheritedRecord) personaController.applyInherited(getContext().chatMetadata, seedMeta, inheritedRecord);
         if (!Array.isArray(seedMeta.events)) seedMeta.events = [];
         seedMeta.events = seedMeta.events.filter(evt => !evt?._carryoverSeed);
 
@@ -20284,8 +20320,11 @@ async function clearAllData() {
     for (const msg of chat) {
         delete msg.horae_meta;
     }
+    // 显式清空：开局基线一并清除，并记录 opt-out，下次发送不会自动重建
+    personaController.markCleared();
 
     await getContext().saveChat();
+    personaController.renderStatus();
     showToast(t('toast.settingsRestored'), 'warning');
     refreshAllDisplays();
 }
@@ -20457,6 +20496,39 @@ function _bgChatKey() {
     if (!chatId) chatId = _deriveChatId(ctx);
     return `${ctx?.groupId || ''}::${chatId}`;
 }
+
+// ============================================
+// Persona 开局状态（逻辑见 core/personaBootstrap.js 与 core/personaController.js）
+// ============================================
+function _pbActivePersonaKey() {
+    return String(stPersonasModule?.user_avatar || '');
+}
+function _pbPersonaName(key) {
+    return String(stPowerUserModule?.power_user?.personas?.[key] || '');
+}
+function _pbListPersonas() {
+    const map = stPowerUserModule?.power_user?.personas || {};
+    return Object.keys(map).map(key => ({ key, name: map[key] || key }))
+        .sort((a, b) => a.name.localeCompare(b.name));
+}
+function _pbPersonaAvatarUrl(key) {
+    if (!key) return '';
+    try { return getContext()?.getThumbnailUrl?.('persona', key) || `User Avatars/${key}`; }
+    catch (_) { return `User Avatars/${key}`; }
+}
+
+const personaController = createPersonaController({
+    getContext, getSettings: () => settings, saveSettings, horaeManager, t, showToast, escapeHtml, isLightMode,
+    preventModalBubble: () => preventModalBubble(document.getElementById('horae-persona-modal')),
+    refreshAllDisplays: () => { refreshAllDisplays(); try { updateAllRpgHuds(); } catch (_) { /* ignore */ } },
+    onSettingsChanged: () => { horaeManager.init(getContext(), settings); syncSettingsToUI(); refreshAllDisplays(); },
+    stopGeneration: () => stScriptModule?.stopGeneration?.(),
+    chatKey: () => _bgChatKey(),
+    getActivePersonaKey: _pbActivePersonaKey,
+    getPersonaName: _pbPersonaName,
+    listPersonas: _pbListPersonas,
+    getPersonaAvatarUrl: _pbPersonaAvatarUrl,
+});
 
 const BG_REQUEST_TIMEOUT_MS = 180000;
 let _bgMainGenerating = false;
@@ -21733,6 +21805,9 @@ async function onPromptReady(eventData) {
             }
         }
 
+        // 聚合缓存与开局基线不一致时（例如开局时还没有任何楼层）先重建
+        personaController.ensureAggregate();
+
         const eqAutoApplied = _autoApplyEquipmentTemplatesByRace({ persist: false });
         if (eqAutoApplied && getContext()?.saveChat) await getContext().saveChat();
 
@@ -22016,6 +22091,8 @@ async function onChatChanged() {
             // 跟 pending-scan / cardprofile 错开，避免多个弹窗叠在一起
             setTimeout(() => _maybeSuggestCustomCalendar(), 2400);
             _bgResumeInterrupted();
+            if (personaController.ensureAggregate()) refreshAllDisplays();
+            personaController.renderStatus();
         } catch (err) {
             console.error('[Horae] onChatChanged 面板渲染失败:', err);
         }
@@ -22313,6 +22390,8 @@ jQuery(async () => {
     syncSettingsToUI();
 
     horaeManager.init(getContext(), settings);
+    // Persona 开局基线：chat_metadata 中的冻结记录是唯一权威来源
+    horaeManager.setBootstrapProvider(() => getContext()?.chatMetadata?.[PB_META_KEY] || null);
     _publishHoraeApi();
     _portsReady = true;
 
@@ -22336,6 +22415,15 @@ jQuery(async () => {
     if (event_types.GENERATION_STOPPED) {
         eventSource.on(event_types.GENERATION_STOPPED, () => { _bgMainGenerating = false; });
     }
+
+    // Persona 开局预检：Generate 内 await，早于提示词组装与 Horae 状态快照；generateRaw 不触发此事件
+    const _pbPreflightListener = async (type, _params, dryRun) => {
+        try { await personaController.preflight(type, dryRun); }
+        catch (err) { console.error('[Horae][Persona] 预检异常:', err); }
+    };
+    if (typeof eventSource.makeFirst === 'function') eventSource.makeFirst(event_types.GENERATION_AFTER_COMMANDS, _pbPreflightListener);
+    else eventSource.on(event_types.GENERATION_AFTER_COMMANDS, _pbPreflightListener);
+    if (event_types.PERSONA_CHANGED) eventSource.on(event_types.PERSONA_CHANGED, () => personaController.renderStatus());
 
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, () => {
         TavernHelper.injectPrompts([

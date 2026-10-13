@@ -6,6 +6,7 @@
 import { parseStoryDate, calculateRelativeTime, calculateDetailedRelativeTime, generateTimeReference, formatRelativeTime, formatFullDateTime, getRelativeTimeMeta, setCustomCalendar } from '../utils/timeUtils.js';
 import { detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './i18n.js';
 import { getPromptDefaultSync } from './promptDefaults.js';
+import { baselineSteps, applyBaselineItems, applyBaselineStrongholds, isRecordActive } from './personaBootstrap.js';
 
 /**
  * @typedef {Object} HoraeTimestamp
@@ -167,6 +168,43 @@ class HoraeManager {
         return text;
     }
 
+    /**
+     * Persona 开局基线来源（index.js 提供：读取 chat_metadata.horaePersonaBootstrap）。
+     * 基线不是任何楼层的增量，所有状态读取/重建都在第 0 条之前先折叠它。
+     */
+    setBootstrapProvider(fn) {
+        this._bootstrapProvider = typeof fn === 'function' ? fn : null;
+    }
+
+    getBootstrapRecord() {
+        try { return this._bootstrapProvider ? (this._bootstrapProvider() || null) : null; }
+        catch { return null; }
+    }
+
+    /** 已初始化玩家（基线所有者）；未初始化或已清空时为 '' */
+    getBootstrapOwner() {
+        const rec = this.getBootstrapRecord();
+        return isRecordActive(rec) ? (rec.owner || '') : '';
+    }
+
+    /** @returns {Map<number, object[]>} 应用位置 → 基线步骤（-1 = 任何楼层之前） */
+    _baselineSteps() {
+        return baselineSteps(this.getBootstrapRecord(), this.getChat().length);
+    }
+
+    /** 有效属性条定义：本聊天快照优先，全局 rpgBarConfig 作为补充 */
+    getEffectiveBarConfig() {
+        const global = Array.isArray(this.settings?.rpgBarConfig) ? this.settings.rpgBarConfig : [];
+        const rec = this.getBootstrapRecord();
+        const defs = isRecordActive(rec) && Array.isArray(rec.barDefs) ? rec.barDefs : [];
+        if (!defs.length) return global;
+        const keys = new Set(defs.map(d => d.key));
+        return [...defs.map(d => {
+            const g = global.find(x => x.key === d.key);
+            return { ...(g || {}), ...d, name: d.name || g?.name || d.key.toUpperCase(), color: d.color || g?.color || '#6366f1' };
+        }), ...global.filter(g => !keys.has(g.key))];
+    }
+
     /** 是否为 Background / Metadata Only 模式（主模型不输出任何 Horae 标签） */
     isMetadataMode() {
         return this.settings?.stateMode === 'metadata';
@@ -197,8 +235,13 @@ class HoraeManager {
         const state = createEmptyMeta();
         state._previousLocation = '';
         const end = Math.max(0, chat.length - skipLast);
+        // 开局基线（及旧聊天补录）先于/穿插在楼层增量之间折叠
+        const _steps = this._baselineSteps();
+        const _applySteps = (at) => { for (const s of _steps.get(at) || []) applyBaselineItems(state.items, s.items); };
+        _applySteps(-1);
         
         for (let i = 0; i < end; i++) {
+            if (i > 0) _applySteps(i - 1);
             const meta = chat[i].horae_meta;
             if (!meta) continue;
             if (meta._skipHorae) continue;
@@ -384,6 +427,8 @@ class HoraeManager {
             }
         }
         
+        if (end > 0) _applySteps(end - 1);
+
         // 过滤用户已删除的NPC（防回滚）
         const deletedNpcs = chat[0]?.horae_meta?._deletedNpcs;
         if (deletedNpcs?.length) {
@@ -874,7 +919,7 @@ class HoraeManager {
             const sendSkills = this.settings?.sendRpgSkills !== false;
 
             // 属性条名称映射
-            const _barCfg = this.settings?.rpgBarConfig || [];
+            const _barCfg = this.getEffectiveBarConfig();
             const _barNames = {};
             for (const b of _barCfg) _barNames[b.key] = b.name;
 
@@ -908,6 +953,9 @@ class HoraeManager {
                 }
             }
             const filterRpg = rpgAllowed.size > 0 || !!this.settings?.rpgStrictPresentOnly;
+            // 已初始化的玩家：在场名单尚未建立或未列出玩家时，仍向主模型提供其状态（NPC 照常按在场过滤）
+            const _pbOwner = this.getBootstrapOwner();
+            if (_pbOwner && allRpgNames.has(_pbOwner)) rpgAllowed.add(_pbOwner);
             // userOnly时构建行不带角色名前缀
             const _ctxPre = (name, isUo) => {
                 if (isUo) return '';
@@ -2332,11 +2380,22 @@ class HoraeManager {
         rpg.strongholds = JSON.parse(JSON.stringify(shs));
         rpg._deletedStrongholds = JSON.parse(JSON.stringify(delShs));
 
-        // ── 从所有消息重放 _rpgChanges ──
+        // ── 开局基线 → 从所有消息重放 _rpgChanges（补录条目插在其边界楼层之后） ──
+        const _steps = this._baselineSteps();
+        const _applySteps = (at) => {
+            for (const s of _steps.get(at) || []) {
+                this._mergeRpgData(s.rpgChanges, true, null);
+                applyBaselineStrongholds(rpg.strongholds, s.strongholds, rpg._deletedStrongholds || []);
+            }
+        };
+        _applySteps(-1);
         for (let i = 0; i < chat.length; i++) {
             const changes = chat[i]?.horae_meta?._rpgChanges;
             if (changes) this._mergeRpgData(changes, true, i);
+            _applySteps(i);
         }
+        const _rec = this.getBootstrapRecord();
+        rpg._baselineMark = isRecordActive(_rec) ? `${_rec.commitId}:${(_rec.repairs || []).length}` : '';
 
         // ── 回填用户手动添加的技能 ──
         for (const [owner, arr] of Object.entries(userSkills)) {
@@ -2415,8 +2474,9 @@ class HoraeManager {
      */
     getRpgStateAt(skipLast = 0) {
         const chat = this.getChat();
-        if (!chat?.length) return { bars: {}, status: {}, skills: {}, attributes: {}, reputation: {}, equipment: {}, levels: {}, xp: {}, currency: {}, strongholds: [] };
-        const end = Math.max(1, chat.length - skipLast);
+        if (!Array.isArray(chat)) return { bars: {}, status: {}, skills: {}, attributes: {}, reputation: {}, equipment: {}, levels: {}, xp: {}, currency: {}, strongholds: [] };
+        // 只含 skipLast 之前的楼层；「第 0 条之前」的状态只有开局基线，不含第 0 条自身的增量
+        const end = Math.max(0, chat.length - skipLast);
         const first = chat[0];
         const rpgMeta = first?.horae_meta?.rpg || {};
         const _cfgs = first?.horae_meta?._rpgConfigs || {};
@@ -2453,9 +2513,7 @@ class HoraeManager {
 
         // 从消息中累积属性（snapshot 是独立对象，不污染 chat[0]）
         const _resolve = (raw) => this._resolveRpgOwner(raw);
-        for (let i = 0; i < end; i++) {
-            const changes = chat[i]?.horae_meta?._rpgChanges;
-            if (!changes) continue;
+        const applyChanges = (changes, i) => {
             for (const [raw, barData] of Object.entries(changes.bars || {})) {
                 const owner = _resolve(raw);
                 if (!snapshot.bars[owner]) snapshot.bars[owner] = {};
@@ -2562,6 +2620,20 @@ class HoraeManager {
                     else if (bc.field === 'desc') targetNode.desc = String(bc.value);
                 }
             }
+        };
+        // 基线 → 楼层增量（按顺序）；补录条目插在其边界楼层之后
+        const _steps = this._baselineSteps();
+        const applySteps = (at) => {
+            for (const s of _steps.get(at) || []) {
+                applyChanges(s.rpgChanges, -1);
+                applyBaselineStrongholds(snapshot.strongholds, s.strongholds, deletedSh);
+            }
+        };
+        applySteps(-1);
+        for (let i = 0; i < end; i++) {
+            const changes = chat[i]?.horae_meta?._rpgChanges;
+            if (changes) applyChanges(changes, i);
+            applySteps(i);
         }
 
         // 合入用户手动属性（AI数据优先覆盖）
@@ -3950,7 +4022,8 @@ class HoraeManager {
         const uoCur = !!this.settings?.rpgCurrencyUserOnly;
         const anyUo = uoBars || uoSkills || uoAttrs || uoEq || uoRep || uoLvl || uoCur;
         const allUo = uoBars && uoSkills && uoAttrs && uoEq && uoRep && uoLvl && uoCur;
-        const barCfg = this.settings?.rpgBarConfig || [
+        const _effBars = this.getEffectiveBarConfig();
+        const barCfg = (this.settings?.rpgBarConfig || _effBars.length) ? _effBars : [
             { key: 'hp', name: 'HP' }, { key: 'mp', name: 'MP' }, { key: 'sp', name: 'SP' }
         ];
         const attrCfg = this.settings?.rpgAttributeConfig || [];
