@@ -11658,6 +11658,33 @@ function openThemeDesigner() {
 /**
  * 为消息添加元数据面板
  */
+/** 格式化剧情时间（标准日历添加周几）；无日期返回空串 */
+function _formatPanelTime(storyDate, storyTime) {
+    if (!storyDate) return '';
+    const parsed = parseStoryDate(storyDate);
+    const date = (parsed && parsed.type === 'standard') ? formatStoryDate(parsed, true) : storyDate;
+    return storyTime ? `${date} ${storyTime}` : date;
+}
+
+/**
+ * 底部栏摘要的时间与在场人数。本楼层未记录时沿用之前楼层的值（后台模式下场景无变化的楼层常不写），
+ * 并标记 inherited 以便以弱化样式显示。
+ */
+function _panelSummaryParts(messageIndex, meta, inherited = null) {
+    const own = _formatPanelTime(meta.timestamp?.story_date, meta.timestamp?.story_time);
+    const ownCount = meta.scene?.characters_present?.length || 0;
+    if (own && ownCount) return { time: own, timeInherited: false, charCount: ownCount, charsInherited: false };
+    const inh = inherited || horaeManager.getInheritedScene(messageIndex);
+    const inhTime = own ? '' : _formatPanelTime(inh.story_date, inh.story_time);
+    const inhCount = ownCount ? 0 : inh.characters_present.length;
+    return {
+        time: own || inhTime || '--',
+        timeInherited: !own && !!inhTime,
+        charCount: ownCount || inhCount,
+        charsInherited: !ownCount && inhCount > 0,
+    };
+}
+
 function addMessagePanel(messageEl, messageIndex) {
     try {
         const existingPanel = messageEl.querySelector('.horae-message-panel');
@@ -11666,25 +11693,16 @@ function addMessagePanel(messageEl, messageIndex) {
         const meta = horaeManager.getMessageMeta(messageIndex);
         if (!meta) return;
 
-        // 格式化时间（标准日历添加周几）
-        let time = '--';
-        if (meta.timestamp?.story_date) {
-            const parsed = parseStoryDate(meta.timestamp.story_date);
-            if (parsed && parsed.type === 'standard') {
-                time = formatStoryDate(parsed, true);
-            } else {
-                time = meta.timestamp.story_date;
-            }
-            if (meta.timestamp.story_time) {
-                time += ' ' + meta.timestamp.story_time;
-            }
-        }
+        const inherited = horaeManager.getInheritedScene(messageIndex);
+        const summary = _panelSummaryParts(messageIndex, meta, inherited);
+        const time = summary.time;
         // 兼容新旧事件格式
         const eventsArr = meta.events || (meta.event ? [meta.event] : []);
         const eventSummary = eventsArr.length > 0
             ? eventsArr.map(e => e.summary).join(' | ')
             : t('ui.noSpecialEvents');
-        const charCount = meta.scene?.characters_present?.length || 0;
+        const charCount = summary.charCount;
+        const inheritedTitle = escapeHtml(t('ui.inheritedHint'));
         const isSkipped = !!meta._skipHorae;
         const sideplayBtnStyle = settings.sideplayMode ? '' : 'display:none;';
         // 取首条事件等级落到根节点 data-level，曜石简约依此渲染左侧色条；其他布局忽略
@@ -11705,11 +11723,11 @@ function addMessagePanel(messageEl, messageIndex) {
                 <div class="horae-panel-summary">
                     ${_bgStatusBadgeHtml(messageIndex)}
                     ${isSkipped ? `<span class="horae-sideplay-badge">${t('badge.sideplay')}</span>` : ''}
-                    <span class="horae-summary-time">${isSkipped ? t('badge.noTracking') : time}</span>
+                    <span class="horae-summary-time${!isSkipped && summary.timeInherited ? ' horae-inherited' : ''}"${!isSkipped && summary.timeInherited ? ` title="${inheritedTitle}"` : ''}>${isSkipped ? t('badge.noTracking') : escapeHtml(time)}</span>
                     <span class="horae-summary-divider">|</span>
                     <span class="horae-summary-event">${isSkipped ? t('badge.sideplayMarked') : eventSummary}</span>
                     <span class="horae-summary-divider">|</span>
-                    <span class="horae-summary-chars">${isSkipped ? '' : charCount + ' ' + t('characters.present')}</span>
+                    <span class="horae-summary-chars${!isSkipped && summary.charsInherited ? ' horae-inherited' : ''}"${!isSkipped && summary.charsInherited ? ` title="${inheritedTitle}"` : ''}>${isSkipped ? '' : charCount + ' ' + t('characters.present')}</span>
                 </div>
                 <div class="horae-panel-actions">
                     <button class="horae-btn-sideplay" title="${t('tooltip.sideplayMark')}" style="${sideplayBtnStyle}">
@@ -11724,7 +11742,7 @@ function addMessagePanel(messageEl, messageIndex) {
                 </div>
             </div>
             <div class="horae-panel-content" style="display: none;">
-                ${buildPanelContent(messageIndex, meta)}
+                ${buildPanelContent(messageIndex, meta, inherited)}
             </div>
         </div>
     `;
@@ -11825,7 +11843,20 @@ function buildPanelMoodEditable(meta) {
         </div>`;
 }
 
-function buildPanelContent(messageIndex, meta) {
+function buildPanelContent(messageIndex, meta, inherited = null) {
+    // 本楼层未写的场景基础：以占位符显示之前楼层的值（只读，不随保存写入本楼层）
+    const inh = inherited || horaeManager.getInheritedScene(messageIndex);
+    const inhHint = (value, fallback) => value ? t('ui.inheritedValue', { value }) : fallback;
+    const ownTime = [meta.timestamp?.story_date, meta.timestamp?.story_time].filter(Boolean).join(' ');
+    const inhTime = ownTime ? '' : [inh.story_date, inh.story_time].filter(Boolean).join(' ');
+    const ownChars = meta.scene?.characters_present || [];
+    const presentForCostume = ownChars.length ? ownChars : inh.characters_present;
+    const inhCostumes = presentForCostume
+        .filter(name => !meta.costumes?.[name] && inh.costumes[name])
+        .map(name => `${escapeHtml(name)}=${escapeHtml(inh.costumes[name])}`);
+    const inhCostumeNote = inhCostumes.length
+        ? `<div class="horae-inherited-note" title="${escapeHtml(t('ui.inheritedHint'))}">${escapeHtml(t('ui.inheritedValue', { value: '' }))}${inhCostumes.join('；')}</div>`
+        : '';
     const costumeRows = Object.entries(meta.costumes || {}).map(([char, costume]) => `
         <div class="horae-editor-row">
             <input type="text" class="char-input" value="${escapeHtml(char)}" placeholder="${t('placeholder.holderName')}">
@@ -11921,7 +11952,7 @@ function buildPanelContent(messageIndex, meta) {
             <div class="horae-panel-row">
                 <label><i class="fa-regular fa-clock"></i> ${t('label.time')}</label>
                 <div class="horae-panel-value">
-                    <input type="text" class="horae-input-datetime" placeholder="${t('placeholder.dateTime')}" value="${escapeHtml((() => {
+                    <input type="text" class="horae-input-datetime" placeholder="${escapeHtml(inhHint(inhTime, t('placeholder.dateTime')))}" value="${escapeHtml((() => {
         let val = meta.timestamp?.story_date || '';
         if (meta.timestamp?.story_time) val += (val ? ' ' : '') + meta.timestamp.story_time;
         return val;
@@ -11931,24 +11962,25 @@ function buildPanelContent(messageIndex, meta) {
             <div class="horae-panel-row">
                 <label><i class="fa-solid fa-location-dot"></i> ${t('label.location')}</label>
                 <div class="horae-panel-value">
-                    <input type="text" class="horae-input-location" value="${escapeHtml(meta.scene?.location || '')}" placeholder="${t('label.location')}">
+                    <input type="text" class="horae-input-location" value="${escapeHtml(meta.scene?.location || '')}" placeholder="${escapeHtml(inhHint(meta.scene?.location ? '' : inh.location, t('label.location')))}">
                 </div>
             </div>
             <div class="horae-panel-row">
                 <label><i class="fa-solid fa-cloud"></i> ${t('label.atmosphere')}</label>
                 <div class="horae-panel-value">
-                    <input type="text" class="horae-input-atmosphere" value="${escapeHtml(meta.scene?.atmosphere || '')}" placeholder="${t('label.atmosphere')}">
+                    <input type="text" class="horae-input-atmosphere" value="${escapeHtml(meta.scene?.atmosphere || '')}" placeholder="${escapeHtml(inhHint(meta.scene?.atmosphere ? '' : inh.atmosphere, t('label.atmosphere')))}">
                 </div>
             </div>
             <div class="horae-panel-row">
                 <label><i class="fa-solid fa-users"></i> ${t('characters.present')}</label>
                 <div class="horae-panel-value">
-                    <input type="text" class="horae-input-characters" value="${escapeHtml((meta.scene?.characters_present || []).join(', '))}" placeholder="${t('placeholder.charactersSeparated')}">
+                    <input type="text" class="horae-input-characters" value="${escapeHtml(ownChars.join(', '))}" placeholder="${escapeHtml(inhHint(ownChars.length ? '' : inh.characters_present.join(', '), t('placeholder.charactersSeparated')))}">
                 </div>
             </div>
             <div class="horae-panel-row full-width">
                 <label><i class="fa-solid fa-shirt"></i> ${t('status.costumes')}</label>
                 <div class="horae-costume-editor">${costumeRows}</div>
+                ${inhCostumeNote}
                 <button class="horae-btn-add-costume"><i class="fa-solid fa-plus"></i> ${t('common.add')}</button>
             </div>
             ${buildPanelMoodEditable(meta)}
@@ -12706,24 +12738,21 @@ async function savePanelData(panelEl, messageId) {
     const summaryEvent = panelEl.querySelector('.horae-summary-event');
     const summaryChars = panelEl.querySelector('.horae-summary-chars');
 
+    const summary = _panelSummaryParts(messageId, meta);
+    const inheritedTitle = t('ui.inheritedHint');
     if (summaryTime) {
-        if (meta.timestamp.story_date) {
-            const parsed = parseStoryDate(meta.timestamp.story_date);
-            let dateDisplay = meta.timestamp.story_date;
-            if (parsed && parsed.type === 'standard') {
-                dateDisplay = formatStoryDate(parsed, true);
-            }
-            summaryTime.textContent = dateDisplay + (meta.timestamp.story_time ? ' ' + meta.timestamp.story_time : '');
-        } else {
-            summaryTime.textContent = '--';
-        }
+        summaryTime.textContent = summary.time;
+        summaryTime.classList.toggle('horae-inherited', summary.timeInherited);
+        summaryTime.title = summary.timeInherited ? inheritedTitle : '';
     }
     if (summaryEvent) {
         const evts = meta.events || (meta.event ? [meta.event] : []);
         summaryEvent.textContent = evts.length > 0 ? evts.map(e => e.summary).join(' | ') : t('ui.noSpecialEvents');
     }
     if (summaryChars) {
-        summaryChars.textContent = t('ui.presentCount', { n: meta.scene.characters_present.length });
+        summaryChars.textContent = t('ui.presentCount', { n: summary.charCount });
+        summaryChars.classList.toggle('horae-inherited', summary.charsInherited);
+        summaryChars.title = summary.charsInherited ? inheritedTitle : '';
     }
 }
 

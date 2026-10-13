@@ -339,3 +339,37 @@ test('greeting (#0) re-analysis keeps chat-wide data; swipe cache holds only per
     assert.equal(delta.scene.location, '冬木大桥');
     for (const k of ['rpg', 'customTables', 'autoSummaries', '_rpgConfigs', '_otherExtensionData']) assert.equal(delta[k], undefined, k);
 });
+
+test('analyzer default prompts restate scene basics every time; other fields stay incremental', () => {
+    for (const p of [bg.DEFAULT_BG_PROMPT_ZH, bg.DEFAULT_BG_PROMPT_EN]) {
+        assert.match(p, /time:[^\n]*(每次都写|every time)/);
+        assert.match(p, /location:[^\n]*(每次都写|every time)/);
+        assert.match(p, /characters:[^\n]*(每次都写|every time)/);
+        assert.match(p, /costume:[^\n]*(每次都写|every time)/);
+        assert.match(p, /item:[^\n]*(新获得|newly obtained)/, 'items remain change-driven');
+        assert.match(p, /affection:[^\n]*(仅变化|only on change)/, 'affection remains change-driven');
+        assert.doesNotMatch(p, /time:[^\n]*(仅变化时|only if changed)/);
+    }
+});
+
+test('getInheritedScene returns the scene established before a message, read-only', () => {
+    const chat = baseChat();
+    const idx = push(chat, '我坐下。', '烛火摇曳。');
+    commit(chat, idx, parse('<horaeevent>\nevent:一般|坐下\n</horaeevent>'));
+    chat[2].horae_meta.costumes = { [U]: '黑色风衣' };
+    const before = JSON.stringify(chat[idx].horae_meta);
+
+    const inh = horaeManager.getInheritedScene(idx);
+    assert.equal(inh.story_date, '2004/2/1');
+    assert.equal(inh.story_time, '21:00');
+    assert.equal(inh.location, '冬木市·教会');
+    assert.deepEqual(inh.characters_present, [U, '言峰绮礼']);
+    assert.deepEqual(inh.costumes, { [U]: '黑色风衣' });
+    assert.equal(JSON.stringify(chat[idx].horae_meta), before, 'message meta untouched');
+    assert.equal(chat[idx].horae_meta.scene.location, '');
+
+    // 不含本楼层自身；跳过番外楼层
+    chat[2].horae_meta._skipHorae = true;
+    assert.equal(horaeManager.getInheritedScene(idx).location, '');
+    assert.equal(horaeManager.getInheritedScene(0).location, '');
+});

@@ -1526,6 +1526,19 @@ body > .horae-port-bottom-bar {
     font-weight: 500;
 }
 
+/* 本楼层未记录、沿用之前楼层的值 */
+.horae-message-panel .horae-inherited {
+    opacity: 0.6;
+    font-style: italic;
+}
+
+.horae-inherited-note {
+    font-size: 11px;
+    color: var(--horae-text-muted);
+    font-style: italic;
+    margin: 2px 0 4px;
+}
+
 .horae-summary-event {
     color: var(--horae-text);
     flex: 1;

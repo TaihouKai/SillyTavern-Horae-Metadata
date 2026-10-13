@@ -229,6 +229,27 @@ class HoraeManager {
         chat[messageIndex].horae_meta = meta;
     }
 
+    /**
+     * 某楼层之前已确立的场景基础（时间/地点/氛围/在场/服装），供底部栏显示本楼层未写字段的沿用值。
+     * 只读，不写回楼层；聚合逻辑与 getLatestState 的场景部分一致。
+     */
+    getInheritedScene(messageIndex) {
+        const chat = this.getChat();
+        const scene = { story_date: '', story_time: '', location: '', atmosphere: '', characters_present: [], costumes: {} };
+        const end = Math.min(messageIndex, chat.length);
+        for (let i = 0; i < end; i++) {
+            const meta = chat[i]?.horae_meta;
+            if (!meta || meta._skipHorae) continue;
+            if (meta.timestamp?.story_date) scene.story_date = meta.timestamp.story_date;
+            if (meta.timestamp?.story_time) scene.story_time = meta.timestamp.story_time;
+            if (meta.scene?.location) scene.location = meta.scene.location;
+            if (meta.scene?.atmosphere) scene.atmosphere = meta.scene.atmosphere;
+            if (meta.scene?.characters_present?.length > 0) scene.characters_present = [...meta.scene.characters_present];
+            if (meta.costumes) Object.assign(scene.costumes, meta.costumes);
+        }
+        return scene;
+    }
+
     /** 聚合所有消息元数据，获取最新状态 */
     getLatestState(skipLast = 0) {
         const chat = this.getChat();

@@ -1303,6 +1303,8 @@
         "diceMod": "Modifier",
         "diceInject": "Inject to chat",
         "noSpecialEvents": "No special events",
+        "inheritedValue": "Carried over: {{value}}",
+        "inheritedHint": "Not recorded on this message; showing the earlier value (read-only, not saved to this message)",
         "themeDesignerTitle": "Theme Designer",
         "hue": "Hue",
         "saturation": "Saturation",

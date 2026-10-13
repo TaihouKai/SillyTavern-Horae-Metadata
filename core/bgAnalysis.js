@@ -497,14 +497,14 @@ You are an independent state recorder, NOT the story author. Read ONE completed 
 
 === Core rules ===
 1. Record only facts that actually happened. Do NOT record suggestions, planned or intended actions, hypotheticals, conditional outcomes, imagined scenes, lies told in dialogue, or user actions that have not been carried out.
-2. Incremental only: compared with [Current State], omit every field that did not change. Never re-register existing items, skills, NPCs, relationships or agenda entries.
-3. Never invent information that the text does not provide. Do not make up a time, outfit, affection score or stat just to fill a field.
-4. Time: write time: only when in-story time clearly advanced (or becomes known for the first time). It must be in-story time, never real-world time. Idle dialogue does not need to advance the date.
-5. Scene: write location:/characters: only when they change; characters: lists the full current set of present characters.
+2. Scene basics (time / location / characters / costume) are written EVERY time, as the current values after this reply; when the reply does not change one, copy it from [Current State]. Every other field is incremental: omit it if it did not change. Never re-register existing items, skills, NPCs, relationships or agenda entries.
+3. Never invent information that neither the text nor [Current State] provides. Do not make up a time, outfit, affection score or stat just to fill a field; if a scene basic is still unknown, leave that line out.
+4. Time: in-story time only, never real-world time. Start from the time in [Current State] and advance it only by the time that actually passes in the story (a conversation moves the clock a little; idle dialogue does not change the date).
+5. Scene: characters: lists the full current set of present characters; write one costume: line for each of them.
 6. Numeric values (HP/MP/SP bars, level, currency totals) are written as the CURRENT ABSOLUTE value after the change, computed from [Current State]. If unchanged, omit them.
 7. User action: state changes caused by the user's action that the reply confirms (or that the user has clearly carried out) must be recorded too, unless that action is marked as already settled.
 8. Events: write one event: line if this reply contains a story event worth tracing; trivial chit-chat may have no event.
-9. If nothing changed at all, output exactly: <horaenochange/>
+9. Because the scene basics are always written, always output a <horae> block; output <horaenochange/> only when neither the story nor [Current State] establishes any scene.
 10. Output data tags only: no explanation, no story text, no code fences. Write values in the same language as the story text.
 
 The "format reference" sections below were originally written for another context. Any wording like "must include at the end of every reply", "required every turn", "missing = fail" does NOT apply here; the core rules above take precedence.
@@ -522,11 +522,11 @@ The "format reference" sections below were originally written for another contex
 
 === Output format ===
 <horae>
-time:date time (only if changed)
-location:place (only if changed; use · for nested places, keep names identical to Current State)
+time:date time (every time)
+location:place (every time; use · for nested places, keep names identical to Current State)
 atmosphere:mood of the scene (only if changed)\${sceneDescLine}
-characters:full names of all present characters, comma separated (only if the set changed)
-costume:name=outfit description (only on change or first appearance, one line per person)
+characters:full names of all present characters, comma separated (every time)
+costume:name=outfit description (every time, one line per present character)
 item:emoji name(qty)|description=holder@exact location (newly obtained, or quantity/holder/location changed)
 item!:... / item!!:... (important / key items, description required)
 item-:item name (consumed, lost, or no longer tracked)
@@ -545,14 +545,14 @@ export const DEFAULT_BG_PROMPT_ZH = `【Horae 后台状态分析器】
 
 ═══ 基本原则 ═══
 1. 只记录已经实际发生的事实。建议、计划/打算中的行动、假设、条件性的可能结果、想象画面、台词中的谎言、用户尚未执行的行动——一律不记录。
-2. 只做增量：与【当前状态】相比没有变化的字段一律不写。禁止重复登记已有的物品、技能、NPC、关系、待办。
-3. 禁止编造：文本没有提供的信息不写。不要为了“填满字段”而虚构时间、服装、好感度、数值。
-4. 时间：只有剧情内时间明确推进（或首次能够确定）时才写 time:，必须是故事内时间，绝不能使用现实时间。闲聊对话不需要推进日期。
-5. 场景：地点、在场角色发生变化时才写 location:/characters:；characters: 写当前完整的在场名单。
+2. 场景基础（time/location/characters/costume）每次都写，写本条回复之后的当前值；本条回复没有改变的，照抄【当前状态】中的值。其他字段只做增量：没有变化就不写。禁止重复登记已有的物品、技能、NPC、关系、待办。
+3. 禁止编造：文本和【当前状态】都没有提供的信息不写。不要为了“填满字段”而虚构时间、服装、好感度、数值；场景基础仍未知时，省略该行。
+4. 时间：必须是故事内时间，绝不能使用现实时间。以【当前状态】的时间为基准，只按剧情实际流逝推进（一段对话只推进少许；闲聊不改变日期）。
+5. 场景：characters: 写当前完整的在场名单；名单中每个角色各写一行 costume:。
 6. 数值类（HP/MP/SP 等属性条、等级、货币）写变化后的【当前绝对值】，以【当前状态】为基准计算；没有变化就不写。
 7. 用户行动：本条回复确认发生（或用户已明确执行）的用户行动所造成的状态变化也要记录；若该行动被标注为“已结算”，则不得重复记录。
 8. 事件：本条回复中有值得追溯的剧情事件时写一条 event:；纯闲聊、无实质进展可以不写。
-9. 若本条回复没有任何状态变化，只输出：<horaenochange/>
+9. 场景基础每次都写，因此始终输出 <horae> 块；只有剧情和【当前状态】都没有确立任何场景时，才输出：<horaenochange/>
 10. 只输出数据标签：不要解释，不要正文，不要代码块标记。字段内容使用与剧情相同的语言。
 
 下方各“格式参考”原本是为其他场景编写的，其中“每回合必须/必填/缺少=不合格/回复末尾必须包含”等要求在此【一律不适用】，以上基本原则优先。
@@ -570,11 +570,11 @@ export const DEFAULT_BG_PROMPT_ZH = `【Horae 后台状态分析器】
 
 ═══ 输出格式 ═══
 <horae>
-time:日期 时间（仅变化时）
-location:地点（仅变化时；多级地点用·分隔，名称与当前状态保持一致）
+time:日期 时间（每次都写）
+location:地点（每次都写；多级地点用·分隔，名称与当前状态保持一致）
 atmosphere:氛围（仅变化时）\${sceneDescLine}
-characters:当前在场角色全名,逗号分隔（仅在场名单变化时）
-costume:角色名=服装描述（仅服装变化或首次登场时，每人一行）
+characters:当前在场角色全名,逗号分隔（每次都写）
+costume:角色名=服装描述（每次都写，每个在场角色一行）
 item:emoji物品名(数量)|描述=持有者@精确位置（新获得，或已有物品的数量/持有者/位置改变）
 item!:… / item!!:…（重要/关键物品，描述必填）
 item-:物品名（消耗、丢失或不再需要追踪时）
