@@ -707,3 +707,37 @@ export function getTimeOfDay(timeStr) {
     
     return '';
 }
+
+const _EN_MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/**
+ * 世界书扫描文本：把当前剧情日期展开成多种常见写法，让 "2020/01"、"2020年1月"、"January 2020" 等关键词都能命中。
+ * 只用于世界书关键词扫描，不会发送给模型。
+ * @param {{story_date?: string, story_time?: string, location?: string}} scene
+ * @returns {string} 空字符串表示没有可扫描的内容
+ */
+export function buildLorebookScanText(scene = {}) {
+    const rawDate = String(scene.story_date || '').trim();
+    const time = String(scene.story_time || '').trim();
+    const location = String(scene.location || '').trim();
+    const dateForms = [];
+    const parsed = rawDate ? parseStoryDate(rawDate) : null;
+    if (parsed?.type === 'standard' && parsed.month && parsed.day) {
+        const mm = String(parsed.month).padStart(2, '0');
+        const dd = String(parsed.day).padStart(2, '0');
+        const en = _EN_MONTHS[parsed.month - 1];
+        if (parsed.year) {
+            const y = parsed.year;
+            dateForms.push(`${y}/${mm}/${dd}`, `${y}-${mm}-${dd}`, `${y}.${mm}.${dd}`,
+                `${y}年${parsed.month}月${parsed.day}日`, `${en} ${parsed.day}, ${y}`);
+        } else {
+            dateForms.push(`${mm}/${dd}`, `${parsed.month}月${parsed.day}日`, `${en} ${parsed.day}`);
+        }
+    }
+    if (rawDate && !dateForms.includes(rawDate)) dateForms.push(rawDate);
+    const lines = [];
+    if (dateForms.length) lines.push(`date: ${dateForms.join(' | ')}`);
+    if (time) lines.push(`time: ${time}`);
+    if (location) lines.push(`location: ${location}`);
+    return lines.length ? `[Horae current scene]\n${lines.join('\n')}` : '';
+}

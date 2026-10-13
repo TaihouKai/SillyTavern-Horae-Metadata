@@ -168,6 +168,8 @@
         "autoFillPrevTimelineOnSend": "发送时自动补全上一条 AI 消息时间线",
         "autoFillPrevTimelineOnSendHint": "发送前若上一条 AI 回复缺少 <horae>/<horaeevent>，会使用该楼层之前的轻量状态、角色身份和上一条用户行动作为参考，对该楼层进行完整 AI 分析并写回历史。此功能会调用 AI，默认关闭。",
         "injectContext": "自动注入状态上下文",
+        "lorebookScanState": "世界书关键词匹配剧情时间/地点",
+        "lorebookScanStateHint": "让世界书条目的关键词能匹配 Horae 当前的剧情日期、时间和地点（例如关键词 2020/01 会在剧情时间为 2020/01/10 时触发）。这些内容只参与世界书扫描，不会额外发送给模型。",
         "useMainPresetForAiTasks": "后台 AI 任务使用酒馆主预设",
         "useMainPresetForAiTasksHint": "影响 AI 智能补全、单条分析、手动/自动总结等 Horae 后台 AI 任务。默认关闭：走并行通道并自动注入用户预设的破甲（main/NSFW/jailbreak），不抢主聊天通道；开启后改用 generate('quiet') 携带完整预设（含世界书/人物卡/历史），但会与主聊天串行，仅在默认方案仍破不开或输出异常时启用。",
         "showPanel": "显示消息元数据面板",

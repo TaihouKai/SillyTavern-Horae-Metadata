@@ -168,6 +168,8 @@
         "autoFillPrevTimelineOnSend": "Auto-fill previous AI message timeline before send",
         "autoFillPrevTimelineOnSendHint": "Before sending, if the previous AI reply is missing <horae>/<horaeevent>, Horae performs a full AI analysis on that message using lightweight state, character identity, and the previous user action as context, then writes all extracted data back to chat history. This calls AI and is off by default.",
         "injectContext": "Auto-inject state context",
+        "lorebookScanState": "Let lorebook keywords match the story time/location",
+        "lorebookScanStateHint": "Lets lorebook entry keywords match Horae's current story date, time and location (e.g. the keyword 2020/01 triggers when the story date is 2020/01/10). This text is only used for the lorebook scan and is not sent to the model.",
         "useMainPresetForAiTasks": "Use Tavern main preset for background AI tasks",
         "useMainPresetForAiTasksHint": "Affects Horae background AI tasks such as AI Smart Summary, single-message analysis, and manual/auto summarization. Off by default: tasks run on a parallel channel and auto-inject your active main/NSFW/jailbreak prompts from your Tavern preset, without blocking the main chat. When enabled, tasks switch to generate('quiet') with the full preset (incl. world info / character card / history), but they run serially with the main chat. Enable only if the default jailbreak still fails or output is abnormal.",
         "showPanel": "Show message metadata panel",

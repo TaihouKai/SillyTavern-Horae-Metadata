@@ -16,7 +16,7 @@ import * as stPowerUserModule from '/scripts/power-user.js';
 import { horaeManager, createEmptyMeta, getItemBaseName } from './core/horaeManager.js';
 import { vectorManager } from './core/vectorManager.js';
 import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH } from './core/bgAnalysis.js';
-import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate } from './utils/timeUtils.js';
+import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText } from './utils/timeUtils.js';
 import { PB_META_KEY } from './core/personaBootstrap.js';
 import { createPersonaController } from './core/personaController.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
@@ -144,6 +144,7 @@ const DEFAULT_SETTINGS = {
     autoParse: true,
     autoFillPrevTimelineOnSend: false, // 发送前自动补全上一条AI消息的时间线（默认关闭，避免静默误写历史）
     injectContext: true,
+    lorebookScanState: true,  // 让世界书关键词能匹配 Horae 当前的剧情日期/时间/地点（只参与扫描，不发送）
     useMainPresetForAiTasks: false, // AI分析/批量扫描/手动压缩是否使用酒馆主预设（generate）
     showMessagePanel: true,
     injectionDepthSource: 'system', // 注入深度来源: system(原逻辑) / preset(按完整提示词末尾偏移)
@@ -324,7 +325,7 @@ const PRESERVED_KEYS_ON_RESET = [
 // 配置档导出/导入/角色卡同步共用的字段白名单。
 // 故意排除 API URL/Key/Model、向量召回参数等本地敏感/环境相关字段，避免随卡分享时泄露凭据。
 const _SETTINGS_EXPORT_KEYS = [
-    'enabled', 'autoParse', 'autoFillPrevTimelineOnSend', 'injectContext', 'useMainPresetForAiTasks', 'showMessagePanel', 'showTopIcon',
+    'enabled', 'autoParse', 'autoFillPrevTimelineOnSend', 'injectContext', 'lorebookScanState', 'useMainPresetForAiTasks', 'showMessagePanel', 'showTopIcon',
     'stateMode', 'bgAutoAnalyze', 'bgWaitBeforeSend', 'bgWaitTimeoutSec', 'customBgAnalysisPrompt',
     'injectionDepthSource', 'injectionPosition', 'timelineInjectionMode',
     'sendTimeline', 'contextDepth', 'sendCharacters', 'sendItems',
@@ -13255,6 +13256,12 @@ function initSettingsEvents() {
         saveSettings();
     });
 
+    $('#horae-setting-lorebook-scan').on('change', function () {
+        settings.lorebookScanState = this.checked;
+        saveSettings();
+        _updateLorebookScanPrompt();
+    });
+
     $('#horae-setting-use-main-preset').on('change', function () {
         settings.useMainPresetForAiTasks = this.checked;
         saveSettings();
@@ -16063,6 +16070,7 @@ function syncSettingsToUI() {
     $('#horae-setting-auto-parse').prop('checked', settings.autoParse);
     $('#horae-setting-auto-fill-prev-timeline').prop('checked', settings.autoFillPrevTimelineOnSend === true);
     $('#horae-setting-inject-context').prop('checked', settings.injectContext);
+    $('#horae-setting-lorebook-scan').prop('checked', settings.lorebookScanState !== false);
     $('#horae-setting-use-main-preset').prop('checked', !!settings.useMainPresetForAiTasks);
     $('#horae-cardprofile-mode').val(settings.cardProfileMode ?? '');
     $('#horae-setting-show-panel').prop('checked', settings.showMessagePanel);
@@ -21847,6 +21855,50 @@ function _antiParaphraseSnippets() {
     };
 }
 
+/** 末尾是已带状态的 AI 楼层（swipe/regenerate）时返回 1：其旧状态不应计入本次生成 */
+function _detectSkipLast(chat) {
+    if (!chat || chat.length === 0) return 0;
+    const lastMsg = chat[chat.length - 1];
+    if (lastMsg && !lastMsg.is_user && lastMsg.horae_meta && (
+        lastMsg.horae_meta.timestamp?.story_date ||
+        lastMsg.horae_meta.scene?.location ||
+        Object.keys(lastMsg.horae_meta.items || {}).length > 0 ||
+        Object.keys(lastMsg.horae_meta.costumes || {}).length > 0 ||
+        Object.keys(lastMsg.horae_meta.affection || {}).length > 0 ||
+        Object.keys(lastMsg.horae_meta.npcs || {}).length > 0 ||
+        (lastMsg.horae_meta.events || []).length > 0 ||
+        (lastMsg.horae_meta._rpgChanges && Object.keys(lastMsg.horae_meta._rpgChanges).length > 0)
+    )) return 1;
+    return 0;
+}
+
+const LOREBOOK_SCAN_KEY = 'horae_lorebook_scan';
+
+/**
+ * 世界书扫描钩子：以 NONE 位置 + scan=true 登记一条扩展提示词。
+ * 酒馆在扫描世界书时会把它当作扫描文本，但不会把它放进发送给模型的提示词。
+ */
+function _updateLorebookScanPrompt(skipLast = 0) {
+    const { setExtensionPrompt, extension_prompt_types } = stScriptModule;
+    if (typeof setExtensionPrompt !== 'function') return '';
+    let text = '';
+    try {
+        if (settings.enabled && settings.lorebookScanState !== false && horaeManager.getChat()?.length) {
+            const state = horaeManager.getLatestState(skipLast);
+            text = buildLorebookScanText({
+                story_date: state.timestamp?.story_date,
+                story_time: state.timestamp?.story_time,
+                location: state.scene?.location,
+            });
+        }
+    } catch (err) {
+        console.warn('[Horae] 世界书扫描文本生成失败:', err);
+        text = '';
+    }
+    setExtensionPrompt(LOREBOOK_SCAN_KEY, text, extension_prompt_types?.NONE ?? -1, 0, true);
+    return text;
+}
+
 async function onPromptReady(eventData) {
     const skipVectorRecallOnce = _stripNoVectorRecallMarkers(eventData?.chat);
     const skipContextInjectionOnce = _stripNoContextInjectionMarkers(eventData?.chat);
@@ -21874,23 +21926,8 @@ async function onPromptReady(eventData) {
         }
 
         // swipe/regenerate检测
-        let skipLast = 0;
-        if (chat && chat.length > 0) {
-            const lastMsg = chat[chat.length - 1];
-            if (lastMsg && !lastMsg.is_user && lastMsg.horae_meta && (
-                lastMsg.horae_meta.timestamp?.story_date ||
-                lastMsg.horae_meta.scene?.location ||
-                Object.keys(lastMsg.horae_meta.items || {}).length > 0 ||
-                Object.keys(lastMsg.horae_meta.costumes || {}).length > 0 ||
-                Object.keys(lastMsg.horae_meta.affection || {}).length > 0 ||
-                Object.keys(lastMsg.horae_meta.npcs || {}).length > 0 ||
-                (lastMsg.horae_meta.events || []).length > 0 ||
-                (lastMsg.horae_meta._rpgChanges && Object.keys(lastMsg.horae_meta._rpgChanges).length > 0)
-            )) {
-                skipLast = 1;
-                console.log('[Horae] 检测到swipe/regenerate，跳过末尾消息的旧记忆');
-            }
-        }
+        const skipLast = _detectSkipLast(chat);
+        if (skipLast) console.log('[Horae] 检测到swipe/regenerate，跳过末尾消息的旧记忆');
 
         // 聚合缓存与开局基线不一致时（例如开局时还没有任何楼层）先重建
         personaController.ensureAggregate();
@@ -22093,6 +22130,9 @@ async function onChatChanged() {
             const _npcFixed = horaeManager.repairMalformedNpcNames();
             if (_npcFixed) console.log(`[Horae] 已修复 ${_npcFixed} 条畸形 NPC 名`);
         } catch (e) { console.warn('[Horae] NPC 名修复失败:', e); }
+
+        // 换聊天后刷新世界书扫描文本，避免沿用上一个聊天的剧情时间
+        _updateLorebookScanPrompt();
 
         // ── 迁移旧数据：events 中的摘要卡片回流到 autoSummaries.summaryText ──
         // 旧版只存在 events 卡片中，没写到 autoSummaries[i].summaryText
@@ -22517,6 +22557,22 @@ jQuery(async () => {
     if (typeof eventSource.makeFirst === 'function') eventSource.makeFirst(event_types.GENERATION_AFTER_COMMANDS, _pbPreflightListener);
     else eventSource.on(event_types.GENERATION_AFTER_COMMANDS, _pbPreflightListener);
     if (event_types.PERSONA_CHANGED) eventSource.on(event_types.PERSONA_CHANGED, () => personaController.renderStatus());
+
+    // 世界书扫描早于 CHAT_COMPLETION_PROMPT_READY：在这里先登记当前剧情时间/地点，让世界书关键词能匹配到
+    eventSource.on(event_types.GENERATION_AFTER_COMMANDS, async (type, _params, dryRun) => {
+        try {
+            if (!settings.enabled || settings.lorebookScanState === false) { _updateLorebookScanPrompt(); return; }
+            // 等上一条回复的后台分析提交，否则扫描到的是旧时间（onPromptReady 随后不会重复等待）
+            if (!dryRun && type !== 'quiet' && _isMetadataMode()) await _bgWaitBeforeSend();
+            // 此时用户新消息尚未入列；只有 swipe/regenerate 会替换末尾 AI 楼层，其状态不应参与扫描
+            const chat = horaeManager.getChat();
+            const replacing = (type === 'swipe' || type === 'regenerate') && chat?.length && !chat[chat.length - 1]?.is_user;
+            const text = _updateLorebookScanPrompt(replacing ? 1 : 0);
+            if (text && !dryRun) console.log('[Horae] 世界书扫描文本:', text.replace(/\n/g, ' / '));
+        } catch (err) {
+            console.warn('[Horae] 世界书扫描钩子异常:', err);
+        }
+    });
 
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, () => {
         TavernHelper.injectPrompts([
