@@ -4,6 +4,14 @@
 
 ---
 
+## Fork: 辅助 API（Venice）稳定性与发言者归属
+
+- 辅助 API 地址为 venice.ai 时：不再附带 Venice 自带的系统提示词（`include_venice_system_prompt: false`），并去掉 `<think>` 块；推理模型返回空正文时，自动关闭思考（`disable_thinking`）重试一次，重试与首次请求共用同一超时。其他端点请求体不变。
+- 空正文时在控制台记录 finish_reason / 推理长度 / completion_tokens，便于判断是思考耗尽额度还是模型拒答。
+- 后台分析器提示词新增规则：发言者（角色卡名）可能只是旁白/GM，不得写入在场角色、NPC、好感度、服装；剧情中各角色的言行、服装、物品记在该角色自己名下。
+
+---
+
 ## Fork: 后台模式底部栏场景字段不再空白
 
 - 后台分析器提示词改回与原版主模型一致：场景基础（time / location / characters / costume）每次都写当前值（未变化的照抄当前状态，时间按剧情实际流逝推进）；物品、好感度、NPC 等其余字段仍只在变化时写。

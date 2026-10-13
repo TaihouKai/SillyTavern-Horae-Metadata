@@ -17784,38 +17784,63 @@ async function generateWithDirectApi(prompt, profile = null, opts = {}) {
         body.safety_settings = blockNone;
         body.safetySettings = blockNone;
     }
+    // Venice：不附带 Venice 自带的系统提示词（会干扰结构化输出），正文中不保留 <think> 块
+    const isVenice = /^https?:\/\/([^/]*\.)?venice\.ai(?=[/:]|$)/i.test(url);
+    if (isVenice) body.venice_parameters = { include_venice_system_prompt: false, strip_thinking_response: true };
     console.log(`[Horae] 独立API请求: ${url}, 模型: ${body.model}`);
-    // 可选超时：后台分析需要可中断，避免挂起的请求长期占住辅助 API 串行队列
-    const abortCtl = opts.timeoutMs > 0 && typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const abortTimer = abortCtl ? setTimeout(() => abortCtl.abort(), opts.timeoutMs) : null;
-    let resp;
-    try {
-        resp = await _corsAwareFetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${_apiKey}`
-            },
-            body: JSON.stringify(body),
-            ...(abortCtl ? { signal: abortCtl.signal } : {}),
-        });
-    } catch (err) {
-        if (err?.name === 'AbortError') throw new Error(`timeout after ${Math.round(opts.timeoutMs / 1000)}s`);
-        throw err;
-    } finally {
-        if (abortTimer) clearTimeout(abortTimer);
+    // 可选超时：后台分析需要可中断，避免挂起的请求长期占住辅助 API 串行队列；重试共用同一截止时间
+    const deadline = opts.timeoutMs > 0 ? Date.now() + opts.timeoutMs : 0;
+    const send = async () => {
+        const remaining = deadline ? deadline - Date.now() : 0;
+        if (deadline && remaining <= 0) throw new Error(`timeout after ${Math.round(opts.timeoutMs / 1000)}s`);
+        const abortCtl = deadline && typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const abortTimer = abortCtl ? setTimeout(() => abortCtl.abort(), remaining) : null;
+        let resp;
+        try {
+            resp = await _corsAwareFetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${_apiKey}`
+                },
+                body: JSON.stringify(body),
+                ...(abortCtl ? { signal: abortCtl.signal } : {}),
+            });
+        } catch (err) {
+            if (err?.name === 'AbortError') throw new Error(`timeout after ${Math.round(opts.timeoutMs / 1000)}s`);
+            throw err;
+        } finally {
+            if (abortTimer) clearTimeout(abortTimer);
+        }
+        if (!resp.ok) {
+            const errText = await resp.text().catch(() => '');
+            const hint = _httpStatusHint(resp.status);
+            throw new Error(`独立API ${resp.status}: ${errText.slice(0, 200)}${hint ? `\n💡 ${hint}` : ''}`);
+        }
+        const data = await resp.json();
+        const finishReason = data?.choices?.[0]?.finish_reason || '';
+        if (finishReason === 'content_filter' || finishReason === 'SAFETY') {
+            throw new Error('副API安全过滤拦截，建议：降低批次token上限 或 换用限制更宽松的模型');
+        }
+        return data;
+    };
+    const describeEmpty = (data) => {
+        const choice = data?.choices?.[0];
+        const reasoning = String(choice?.message?.reasoning_content || '');
+        return `finish_reason=${choice?.finish_reason || '?'}, reasoning ${reasoning.length} chars, completion_tokens=${data?.usage?.completion_tokens ?? '?'}`;
+    };
+
+    let data = await send();
+    let content = data?.choices?.[0]?.message?.content || '';
+    // 推理模型可能把输出额度全花在思考上、正文为空：Venice 上关闭思考重试一次
+    if (!String(content).trim() && isVenice) {
+        console.warn(`[Horae] 独立API返回空正文（${describeEmpty(data)}），关闭思考后重试一次`);
+        body.venice_parameters.disable_thinking = true;
+        data = await send();
+        content = data?.choices?.[0]?.message?.content || '';
     }
-    if (!resp.ok) {
-        const errText = await resp.text().catch(() => '');
-        const hint = _httpStatusHint(resp.status);
-        throw new Error(`独立API ${resp.status}: ${errText.slice(0, 200)}${hint ? `\n💡 ${hint}` : ''}`);
-    }
-    const data = await resp.json();
-    const finishReason = data?.choices?.[0]?.finish_reason || '';
-    if (finishReason === 'content_filter' || finishReason === 'SAFETY') {
-        throw new Error('副API安全过滤拦截，建议：降低批次token上限 或 换用限制更宽松的模型');
-    }
-    return data?.choices?.[0]?.message?.content || '';
+    if (!String(content).trim()) console.warn(`[Horae] 独立API返回空正文（${describeEmpty(data)}）`);
+    return content;
 }
 
 /**

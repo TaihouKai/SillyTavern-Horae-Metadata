@@ -373,3 +373,8 @@ test('getInheritedScene returns the scene established before a message, read-onl
     assert.equal(horaeManager.getInheritedScene(idx).location, '');
     assert.equal(horaeManager.getInheritedScene(0).location, '');
 });
+
+test('analyzer default prompts say the speaker may be a narrator and must not absorb NPC data', () => {
+    assert.match(bg.DEFAULT_BG_PROMPT_ZH, /\{\{speaker\}\}」只是写出这条回复的角色卡名称/);
+    assert.match(bg.DEFAULT_BG_PROMPT_EN, /"\{\{speaker\}\}" is only the name of the card/);
+});

@@ -506,6 +506,7 @@ You are an independent state recorder, NOT the story author. Read ONE completed 
 8. Events: write one event: line if this reply contains a story event worth tracing; trivial chit-chat may have no event.
 9. Because the scene basics are always written, always output a <horae> block; output <horaenochange/> only when neither the story nor [Current State] establishes any scene.
 10. Output data tags only: no explanation, no story text, no code fences. Write values in the same language as the story text.
+11. "{{speaker}}" is only the name of the card that wrote this reply. It may be a narrator / GM rather than a person in the story. Do NOT list it in characters:, npc:, affection: or costume: unless it appears in the story text as a character in its own right. Record what each character says, does, wears or owns under THAT character's own name, never under the speaker's name.
 
 The "format reference" sections below were originally written for another context. Any wording like "must include at the end of every reply", "required every turn", "missing = fail" does NOT apply here; the core rules above take precedence.
 
@@ -554,6 +555,7 @@ export const DEFAULT_BG_PROMPT_ZH = `【Horae 后台状态分析器】
 8. 事件：本条回复中有值得追溯的剧情事件时写一条 event:；纯闲聊、无实质进展可以不写。
 9. 场景基础每次都写，因此始终输出 <horae> 块；只有剧情和【当前状态】都没有确立任何场景时，才输出：<horaenochange/>
 10. 只输出数据标签：不要解释，不要正文，不要代码块标记。字段内容使用与剧情相同的语言。
+11. 「{{speaker}}」只是写出这条回复的角色卡名称，可能是旁白/GM/叙述者，而不是剧情中的人物。除非它在剧情正文中作为角色本人出现，否则不得把它写入 characters:/npc:/affection:/costume:。剧情中每个角色的言行、服装、物品，记在【该角色自己的名字】下，绝不能记在发言者名下。
 
 下方各“格式参考”原本是为其他场景编写的，其中“每回合必须/必填/缺少=不合格/回复末尾必须包含”等要求在此【一律不适用】，以上基本原则优先。
 
