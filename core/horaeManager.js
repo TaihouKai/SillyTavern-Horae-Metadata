@@ -88,6 +88,57 @@ const COUNTING_CLASSIFIERS = '个把条块张根口份枚只颗支件套双对�
 // 物品ID：3位数字左补零，如 001, 002, ...
 function padItemId(id) { return String(id).padStart(3, '0'); }
 
+// 状态快照里 NPC 显示为「N011 名｜外貌=性格@关系」；分析器常把编号与全角竖线一起抄回名字里
+const NPC_ID_PREFIX_RE = /^(?:N\d{1,4}\s+)+(?=\S)/;
+
+/** 去掉名字前抄回来的「N011 」显示编号（可能重复多层） */
+export function cleanEntityName(name) {
+    return String(name ?? '').replace(NPC_ID_PREFIX_RE, '').trim();
+}
+
+const REL_SUMMARY_MAX = 20;
+
+/**
+ * 「与主角的关系」只保留简短概括：把括号内容、过长的后半段拆成细节（写入备注）。
+ * 例：「陌生人(警告上官鹭离开风口,…)」→ { summary: '陌生人', details: '警告上官鹭离开风口,…' }
+ */
+export function splitNpcRelationship(rel) {
+    const text = String(rel ?? '').trim();
+    if (text.length <= REL_SUMMARY_MAX) return { summary: text, details: '' };
+    let summary = text;
+    const details = [];
+    const paren = text.search(/[(（]/);
+    if (paren > 0) {
+        summary = text.substring(0, paren).trim();
+        const rest = text.substring(paren)
+            .replace(/^[(（]/, '')
+            .replace(/[)）]\s*$/, '')
+            .replace(/[)）]\s*[(（]/g, '；')
+            .replace(/[)）]/g, '；')
+            .replace(/[(（]/g, '：')
+            .trim();
+        if (rest) details.push(rest);
+    }
+    if (summary.length > REL_SUMMARY_MAX) {
+        const cut = summary.search(/[;；。,，:：—]/);
+        if (cut > 0 && cut <= REL_SUMMARY_MAX) {
+            const tail = summary.substring(cut + 1).trim();
+            summary = summary.substring(0, cut).trim();
+            if (tail) details.unshift(tail);
+        }
+    }
+    if (!summary) return { summary: text, details: '' };
+    return { summary, details: details.join('；').replace(/[；;\s]+$/, '') };
+}
+
+/** 把关系细节并入备注；已包含的内容不重复追加 */
+export function appendNpcNote(note, details) {
+    const base = String(note ?? '').trim();
+    const add = String(details ?? '').trim();
+    if (!add || base.includes(add)) return base;
+    return base ? `${base}；${add}` : add;
+}
+
 export function getItemBaseName(name) {
     return name
         .replace(/[\(（][\d][\d\.\/]*[a-zA-Z\u4e00-\u9fff]*[\)）]$/, '')  // 数字+任意单位
@@ -398,8 +449,17 @@ class HoraeManager {
                 // 可更新字段 vs 受保护字段
                 const updatableFields = ['appearance', 'personality', 'relationship', 'age', 'job', 'note'];
                 const protectedFields = ['gender', 'race', 'birthday'];
-                for (const [name, newNpc] of Object.entries(meta.npcs)) {
+                for (const [name, rawNpc] of Object.entries(meta.npcs)) {
                     const existing = state.npcs[name];
+                    // 关系只保留概括，括号里/过长的记录并入备注（旧数据也在此统一处理）
+                    let newNpc = rawNpc;
+                    if (rawNpc?.relationship) {
+                        const { summary, details } = splitNpcRelationship(rawNpc.relationship);
+                        if (details) {
+                            const baseNote = rawNpc.note !== undefined ? rawNpc.note : (existing?.note || '');
+                            newNpc = { ...rawNpc, relationship: summary, note: appendNpcNote(baseNote, details) };
+                        }
+                    }
                     if (existing) {
                         for (const field of updatableFields) {
                             if (newNpc[field] !== undefined) existing[field] = newNpc[field];
@@ -1710,6 +1770,33 @@ class HoraeManager {
             }
         }
 
+        this._normalizeParsedNames(result);
+        return result;
+    }
+
+    /** 去掉分析器从快照抄回名字里的「N011 」编号（affection/costume/characters/rel/mood；npc 在 _parseNpcFields 中处理） */
+    _normalizeParsedNames(result) {
+        if (!result) return result;
+        const remap = (obj) => {
+            if (!obj || typeof obj !== 'object') return;
+            for (const key of Object.keys(obj)) {
+                const clean = cleanEntityName(key);
+                if (clean && clean !== key) {
+                    if (obj[clean] === undefined) obj[clean] = obj[key];
+                    delete obj[key];
+                }
+            }
+        };
+        remap(result.affection);
+        remap(result.costumes);
+        remap(result.mood);
+        if (Array.isArray(result.scene?.characters_present)) {
+            result.scene.characters_present = [...new Set(result.scene.characters_present.map(cleanEntityName).filter(Boolean))];
+        }
+        for (const r of result.relationships || []) {
+            if (r.from) r.from = cleanEntityName(r.from);
+            if (r.to) r.to = cleanEntityName(r.to);
+        }
         return result;
     }
 
@@ -2774,26 +2861,58 @@ class HoraeManager {
     }
 
     /**
-     * 修复旧版解析留下的畸形 NPC 名（如「食蜂操祈=@审讯者;…」被整行当作名字）：
-     * 拆出真实名字与字段，并入该楼层同名 NPC。幂等；返回修复条数。
+     * 修复旧版解析留下的畸形 NPC 名：
+     *  - 「食蜂操祈=@审讯者;…」（省略「|」，整行被当作名字）
+     *  - 「N011 神秘人｜短发,…」「N017 N016 N001 食蜂操祈｜｜｜」（从状态快照抄回的编号与全角竖线）
+     * 拆出真实名字与字段并入该楼层同名 NPC；好感度/服装/情绪/在场名单/关系中的编号前缀一并去掉。幂等；返回修复条数。
      */
     repairMalformedNpcNames() {
         const chat = this.getChat();
         let fixed = 0;
-        for (const message of chat || []) {
-            const npcs = message?.horae_meta?.npcs;
-            if (!npcs) continue;
-            for (const badName of Object.keys(npcs)) {
-                if (badName.includes('|') || !/[=@]/.test(badName)) continue;
-                const parsed = this._parseNpcFields(badName);
-                const name = parsed._name;
-                delete parsed._name;
-                if (!name || name === badName) continue;
-                const { _name, ...badInfo } = npcs[badName] || {};
-                npcs[name] = { ...(npcs[name] || {}), ...badInfo, ...parsed };
-                delete npcs[badName];
+        const nonEmpty = (obj) => Object.fromEntries(Object.entries(obj || {}).filter(([, v]) => v !== undefined && v !== ''));
+        const remapKeys = (obj) => {
+            if (!obj || typeof obj !== 'object') return;
+            for (const key of Object.keys(obj)) {
+                const clean = cleanEntityName(key);
+                if (!clean || clean === key) continue;
+                if (obj[clean] === undefined) obj[clean] = obj[key];
+                delete obj[key];
                 fixed++;
             }
+        };
+        const cleanRels = (rels) => {
+            for (const r of rels || []) {
+                for (const k of ['from', 'to']) {
+                    const clean = r?.[k] ? cleanEntityName(r[k]) : '';
+                    if (clean && clean !== r[k]) { r[k] = clean; fixed++; }
+                }
+            }
+        };
+        for (const message of chat || []) {
+            const meta = message?.horae_meta;
+            if (!meta) continue;
+            const npcs = meta.npcs;
+            if (npcs) {
+                for (const badName of Object.keys(npcs)) {
+                    const parsed = this._parseNpcFields(badName);
+                    const name = parsed._name;
+                    delete parsed._name;
+                    if (!name || name === badName) continue;
+                    const { _name, ...badInfo } = npcs[badName] || {};
+                    npcs[name] = { ...(npcs[name] || {}), ...nonEmpty(badInfo), ...nonEmpty(parsed) };
+                    delete npcs[badName];
+                    fixed++;
+                }
+            }
+            remapKeys(meta.affection);
+            remapKeys(meta.costumes);
+            remapKeys(meta.mood);
+            const present = meta.scene?.characters_present;
+            if (Array.isArray(present) && present.some(c => cleanEntityName(c) !== c)) {
+                meta.scene.characters_present = [...new Set(present.map(cleanEntityName).filter(Boolean))];
+                fixed++;
+            }
+            cleanRels(meta.relationships);
         }
         return fixed;
     }
@@ -3235,6 +3354,9 @@ class HoraeManager {
     _parseNpcFields(npcStr) {
         const info = {};
         if (!npcStr) return { _name: '' };
+
+        // 快照格式「N011 名｜外貌=性格@关系」被抄回时：去编号、全角竖线当作分隔符
+        npcStr = cleanEntityName(String(npcStr).replace(/｜/g, '|'));
 
         // 1. 分离扩展字段
         const tildeParts = npcStr.split('~');
@@ -4817,6 +4939,7 @@ class HoraeManager {
             }
         }
 
+        if (hasAnyData) this._normalizeParsedNames(result);
         return hasAnyData ? result : null;
     }
 }

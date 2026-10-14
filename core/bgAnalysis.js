@@ -506,14 +506,14 @@ You are an independent state recorder, NOT the story author. Read ONE completed 
 8. Events: write one event: line if this reply contains a story event worth tracing; trivial chit-chat may have no event.
 9. Because the scene basics are always written, always output a <horae> block; output <horaenochange/> only when neither the story nor [Current State] establishes any scene.
 10. Output data tags only: no explanation, no story text, no code fences. Write values in the same language as the story text.
-11. "{{speaker}}" is only the name of the card that wrote this reply. It may be a narrator / GM rather than a person in the story. Do NOT list it in characters:, npc:, affection: or costume: unless it appears in the story text as a character in its own right. Record what each character says, does, wears or owns under THAT character's own name, never under the speaker's name.
+11. "{{speaker}}" is only the name of the card that wrote this reply. It may be a narrator / GM rather than a person in the story. Do NOT list it in characters:, npc:, affection: or costume: unless it appears in the story text as a character in its own right. Record what each character says, does, wears or owns under THAT character's own name, never under the speaker's name. The "N011"-style numbers in front of NPCs in [Current State] are display IDs, not part of the name: write only the name itself (npc:Alice|…, not npc:N001 Alice｜…), and use the half-width "|" separator.
 12. Affection (affection:, NPC toward {{user}} only):
    - When an NPC first interacts with {{user}}, or a present NPC has no affection in [Current State] yet, give a starting value from their current relationship (stranger 0-20 / acquaintance 30-50 / friend 50-70 / lover 70-90).
    - After that, start from the value in [Current State] and write the new total only when an interaction meaningfully changes their attitude: small steps for everyday interaction, big changes only for major events.
 13. Relationships evolve; they are not re-judged from scratch (applies to npc:'s "@relationship to {{user}}" and rel:'s relationship type):
    - The relationship already in [Current State] is the base; this reply only modifies it. Write the complete relationship after "existing relationship + this change", never a fresh summary of this reply alone.
    - A lasting bond (lovers, close friends, family, rivals...) is NOT replaced by one mission, one conversation or a temporary role (bodyguard, employer, guide, teammate...). Put temporary roles in the note (npc: ~note:, rel: the note after "|").
-   - npc:'s "@relationship to {{user}}" is a SHORT summary only (e.g. "lover", "employer and childhood friend", a few words). The history of the relationship, concrete experiences and recent developments go into that NPC's ~note:. If the relationship in [Current State] is already long, move the details into ~note: in this update and keep only the summary.
+   - npc:'s "@relationship to {{user}}" is a SHORT summary only (e.g. "lover", "employer and childhood friend", a few words). The history of the relationship, concrete experiences and recent developments go into that NPC's ~note:. If the relationship in [Current State] is already long, move the details into ~note: in this update and keep only the summary. Never append parenthetical notes or event records to the relationship (e.g. "stranger (warned…, recorded…)"); those always go into ~note:.
    - A written ~note: replaces the old note entirely (shown as "notes" in the snapshot): keep what still matters from the old note (including non-relationship information), then merge in the new details; skip trivial details.
    - Upgrade, downgrade or change the relationship type only when the story shows an explicit event (confession, breakup, betrayal, reconciliation, marriage...).
    - A written value replaces the old one entirely, so always write the complete current relationship; omit the line when neither the relationship nor its note changed.
@@ -566,14 +566,14 @@ export const DEFAULT_BG_PROMPT_ZH = `【Horae 后台状态分析器】
 8. 事件：本条回复中有值得追溯的剧情事件时写一条 event:；纯闲聊、无实质进展可以不写。
 9. 场景基础每次都写，因此始终输出 <horae> 块；只有剧情和【当前状态】都没有确立任何场景时，才输出：<horaenochange/>
 10. 只输出数据标签：不要解释，不要正文，不要代码块标记。字段内容使用与剧情相同的语言。
-11. 「{{speaker}}」只是写出这条回复的角色卡名称，可能是旁白/GM/叙述者，而不是剧情中的人物。除非它在剧情正文中作为角色本人出现，否则不得把它写入 characters:/npc:/affection:/costume:。剧情中每个角色的言行、服装、物品，记在【该角色自己的名字】下，绝不能记在发言者名下。
+11. 「{{speaker}}」只是写出这条回复的角色卡名称，可能是旁白/GM/叙述者，而不是剧情中的人物。除非它在剧情正文中作为角色本人出现，否则不得把它写入 characters:/npc:/affection:/costume:。剧情中每个角色的言行、服装、物品，记在【该角色自己的名字】下，绝不能记在发言者名下。【当前状态】里 NPC 前面的「N011」之类是显示编号，不是名字的一部分：写名字时只写名字本身（如 npc:食蜂操祈|…，不是 npc:N001 食蜂操祈｜…），分隔符用半角「|」。
 12. 好感度（affection:，仅 NPC 对{{user}}）：
    · NPC 首次与{{user}}互动，或【当前状态】中该在场 NPC 还没有好感度时，按双方当前关系给出初始值（陌生0-20 / 熟人30-50 / 朋友50-70 / 恋人70-90）。
    · 之后以【当前状态】中的值为基准，只在互动使其态度发生实质变化时写变化后的新总值；日常互动小幅调整，重大事件才大幅变化。
 13. 关系是逐步演进的，不是每次重新判定（适用于 npc: 的「@与{{user}}的关系」和 rel: 的关系类型）：
    · 【当前状态】中已有的关系是基础，本条回复只是修正：写“已有关系 + 本次变化”之后的完整关系，不能只依据本条回复重新概括。
    · 长期纽带（恋人、挚友、家人、宿敌等）不会因一次任务、一段对话或临时身份（护卫、雇主、向导、队友等）而被替换；临时身份写进备注（npc: 用 ~备注:，rel: 用「|」后的备注）。
-   · npc: 的「@与{{user}}的关系」只写简短的关系概括（如“恋人”“雇主兼青梅竹马”，约15字以内）。关系的来龙去脉、具体经历与近期动态写进该 NPC 的 ~备注:。若【当前状态】中的关系已经很长，本次更新时把细节移入 ~备注:，关系只保留概括。
+   · npc: 的「@与{{user}}的关系」只写简短的关系概括（如“恋人”“雇主兼青梅竹马”，约15字以内）。关系的来龙去脉、具体经历与近期动态写进该 NPC 的 ~备注:。若【当前状态】中的关系已经很长，本次更新时把细节移入 ~备注:，关系只保留概括。不要在关系里加括号说明或事件记录（如“陌生人(警告…,记录…)”），这些一律写进 ~备注:。
    · ~备注: 写入会整体覆盖旧备注（快照中显示为“补充”）：保留旧备注中仍然重要的内容（包括非关系类的信息），再并入新的细节；不写琐碎细节。
    · 只有剧情中发生明确事件（表白、分手、背叛、和解、结婚等）时，才能升级、降级或改变关系类型。
    · 写入会整体覆盖旧值，所以每次都写完整的当前关系；关系与备注都没有变化时不写该行。

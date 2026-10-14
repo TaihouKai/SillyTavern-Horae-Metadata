@@ -510,3 +510,61 @@ test('NPC relationship stays a short summary; details go to the NPC note (备注
     // 快照中备注显示为“补充”，分析器可据此保留旧内容
     assert.match(horaeManager.generateCompactPrompt(0, { audience: 'analyzer' }), /艾琳｜银发=温柔@恋人~性别:女~补充:曾一起逃离王都/);
 });
+
+test('NPC names copied from the snapshot lose their "N011 " IDs and full-width ｜', () => {
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('一个穿白大褂的人走过。')];
+    setup(chat);
+    commit(chat, 2, parse('<horae>\nnpc:N011 神秘人｜短发,过大白大褂=冷漠@陌生人\nnpc:N017 N016 N014 N001 食蜂操祈｜｜｜\naffection:N001 食蜂操祈=40\ncharacters:N001 食蜂操祈,N011 神秘人\ncostume:N011 神秘人=白大褂\nrel:N001 食蜂操祈>N011 神秘人=同事\n</horae>'));
+    const meta = chat[2].horae_meta;
+    assert.deepEqual(Object.keys(meta.npcs).sort(), ['神秘人', '食蜂操祈'].sort());
+    assert.equal(meta.npcs['神秘人'].appearance, '短发,过大白大褂');
+    assert.equal(meta.npcs['神秘人'].relationship, '陌生人');
+    assert.deepEqual(Object.keys(meta.affection), ['食蜂操祈']);
+    assert.deepEqual(meta.scene.characters_present, ['食蜂操祈', '神秘人']);
+    assert.deepEqual(Object.keys(meta.costumes), ['神秘人']);
+    const rel = horaeManager.getRelationships().find(r => r.type === '同事');
+    assert.equal(rel?.from, '食蜂操祈');
+    assert.equal(rel?.to, '神秘人');
+    for (const p of [bg.DEFAULT_BG_PROMPT_ZH, bg.DEFAULT_BG_PROMPT_EN]) assert.match(p, /N011/);
+});
+
+test('repairMalformedNpcNames merges stored "N001 名｜…" entries back into the real NPC', () => {
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('食蜂操祈出现。'), msg('继续', { user: true }), msg('她又出现了。')];
+    setup(chat);
+    commit(chat, 2, parse('<horae>\nnpc:食蜂操祈|金发少女=狡黠@雇主\n</horae>'));
+    chat[4].horae_meta = createEmptyMeta();
+    chat[4].horae_meta.npcs = {
+        'N017 N016 N014 N001 食蜂操祈｜｜｜': { appearance: '', relationship: '雇主', last_seen: 't' },
+        'N011 神秘人｜短发,青色筋,过大白大褂': { last_seen: 't' },
+    };
+    chat[4].horae_meta.affection = { 'N001 食蜂操祈': { type: 'absolute', value: 55 } };
+    assert.ok(horaeManager.repairMalformedNpcNames() >= 3);
+    assert.deepEqual(Object.keys(chat[4].horae_meta.npcs).sort(), ['神秘人', '食蜂操祈'].sort());
+    const npcs = horaeManager.getLatestState().npcs;
+    assert.deepEqual(Object.keys(npcs).sort(), ['神秘人', '食蜂操祈'].sort());
+    assert.equal(npcs['食蜂操祈'].appearance, '金发少女', 'empty fields from the bad entry do not wipe real data');
+    assert.equal(npcs['神秘人'].appearance, '短发,青色筋,过大白大褂');
+    assert.equal(horaeManager.getLatestState().affection['食蜂操祈'], 55);
+    assert.equal(horaeManager.repairMalformedNpcNames(), 0, 'idempotent');
+});
+
+test('long relationships keep only the summary; the record moves into 备注', () => {
+    const chat = [msg('开场'), msg('嗨', { user: true }), msg('研究员看着你。')];
+    setup(chat);
+    commit(chat, 2, parse('<horae>\nnpc:研究员|白大褂=冷静@熟人~备注:负责培养槽区域\n</horae>'));
+    const idx = push(chat, '我靠近风口。', '研究员警告你离开。');
+    commit(chat, idx, parse('<horae>\nnpc:研究员|=@陌生人(警告上官鹭离开风口,确认门被外人打开,记录入侵事件,下令封锁走廊并清空培养槽,命令上官鹭不得再靠近风口,嗅出上官鹭气味,推测门内另有他人)\n</horae>'));
+    let n = horaeManager.getLatestState().npcs['研究员'];
+    assert.equal(n.relationship, '陌生人');
+    assert.match(n.note, /^负责培养槽区域；警告上官鹭离开风口,确认门被外人打开/, 'old note kept, record appended');
+    assert.ok(!n.note.includes('(') && !n.note.endsWith(')'));
+    // 关系后半段过长时也拆开；短关系（含短括号）保持原样
+    const idx2 = push(chat, '继续。', '她提出雇佣。');
+    commit(chat, idx2, parse('<horae>\nnpc:研究员|=@雇主;雇佣提案者(揭露上官鹭的秘密、与暗部身份，进行精神掌握；提出贴身保镖雇佣)\n</horae>'));
+    n = horaeManager.getLatestState().npcs['研究员'];
+    assert.equal(n.relationship, '雇主;雇佣提案者');
+    assert.match(n.note, /提出贴身保镖雇佣$/);
+    const idx3 = push(chat, '继续。', '……');
+    commit(chat, idx3, parse('<horae>\nnpc:研究员|=@恋人（前任）\n</horae>'));
+    assert.equal(horaeManager.getLatestState().npcs['研究员'].relationship, '恋人（前任）');
+});

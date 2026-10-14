@@ -22125,10 +22125,14 @@ async function onChatChanged() {
             }
         }
 
-        // ── 修复旧数据：省略「|」的 npc: 行曾被整行当作 NPC 名 ──
+        // ── 修复旧数据：省略「|」的 npc: 行、从快照抄回的「N011 」编号/全角竖线曾被当作 NPC 名 ──
         try {
             const _npcFixed = horaeManager.repairMalformedNpcNames();
-            if (_npcFixed) console.log(`[Horae] 已修复 ${_npcFixed} 条畸形 NPC 名`);
+            if (_npcFixed) {
+                horaeManager.rebuildRelationships();
+                console.log(`[Horae] 已修复 ${_npcFixed} 处畸形 NPC 名`);
+                getContext()?.saveChat?.();
+            }
         } catch (e) { console.warn('[Horae] NPC 名修复失败:', e); }
 
         // 换聊天后刷新世界书扫描文本，避免沿用上一个聊天的剧情时间
