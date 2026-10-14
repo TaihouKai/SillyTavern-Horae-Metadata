@@ -741,3 +741,73 @@ export function buildLorebookScanText(scene = {}) {
     if (location) lines.push(`location: ${location}`);
     return lines.length ? `[Horae current scene]\n${lines.join('\n')}` : '';
 }
+
+// ── Canon Engine 故事时钟（只读；未安装/未启用时一律返回 null，行为与以前完全一致）──
+
+/** 读取 Canon Engine 公开的已提交故事时钟；不可用时返回 null */
+export function readCanonClock(root = globalThis) {
+    try {
+        const clk = root?.CanonEngine?.api?.getClock?.();
+        if (!clk || clk.active !== true) return null;
+        if (!clk.date && !clk.time) return null;
+        return clk;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * 分析提示词中的权威时钟行。
+ * phase = 'start'：时钟是这条回复开始时的时间（回复渲染时捕获），按正文推进；
+ * phase = 'end'：时钟已包含这条回复（Canon 已提交），直接写这个时间，不再推进。
+ */
+export function formatCanonClockLine(clk, { zh = false, phase = 'start' } = {}) {
+    if (!clk) return '';
+    const when = [clk.date, clk.time].filter(Boolean).join(' ');
+    const uncertain = Number.isFinite(clk.tickHi) && Number.isFinite(clk.tick) && clk.tickHi > clk.tick;
+    if (zh) {
+        let s = `【权威故事时钟（Canon Engine）：${when}】`;
+        s += phase === 'end'
+            ? '这是本条回复结束后的已提交故事时间。time: 直接写这个日期与时间，不要再推进。'
+            : '以此作为当前日期/时间（本条回复开始时），只按被分析正文中实际流逝的时间推进。';
+        if (!clk.date) s += '（未设定公历日期：只写时间，日期沿用【当前状态】，没有则不写日期。）';
+        if (uncertain) s += '（时间在一个范围内不确定，以此下限为准。）';
+        return s;
+    }
+    let s = `[Authoritative story clock (Canon Engine): ${when}] `;
+    s += phase === 'end'
+        ? 'This is the committed story time after this reply. Write this date and time in time: as-is; do not advance it further.'
+        : 'Use this as the current date/time (when this reply begins); advance only by time that passes in the analyzed text.';
+    if (!clk.date) s += ' (No calendar date is set: write only the time; keep the date from [Current State], or no date if there is none.)';
+    if (uncertain) s += ' (The time is uncertain within a range; use this lower bound.)';
+    return s;
+}
+
+// 格式占位符：YYYY/MM/DD、MM/DD、HH:MM、YYYY年MM月DD日…（至少两个字母，或多段组合），以及照抄的「日期 时间」模板词
+const _PH_TOKEN = '(?:Y{2,4}|M{1,2}|D{1,2}|H{1,2}|h{1,2}|m{1,2}|s{1,2})';
+const _PH_GROUP_RE = new RegExp(String.raw`(?<![A-Za-z])${_PH_TOKEN}(?:\s*[\/\-.:：年月日时分]\s*${_PH_TOKEN})+[日]?(?![A-Za-z])|(?<![A-Za-z])(?:YYYY|YY|MM|DD|HH|hh)(?![A-Za-z])`, 'g');
+const _PH_WORDS_RE = /^(?:日期|时间|時間|date|time)(?:\s*(?:日期|时间|時間|date|time))*$/i;
+
+/** 去掉模型照抄的格式占位符；返回 { text, stripped } */
+export function stripTimePlaceholders(str) {
+    const src = String(str ?? '');
+    let text = src.replace(_PH_GROUP_RE, ' ').replace(/\s{2,}/g, ' ').trim();
+    if (_PH_WORDS_RE.test(text)) text = '';
+    return { text, stripped: text !== src.trim() };
+}
+
+/** 取字符串开头的日历日期部分（2020/09/18、09/18、2020年9月18日…），没有则返回 '' */
+export function extractLeadingDate(str) {
+    const m = String(str ?? '').trim().match(/^(\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}|\d{1,2}[\/\-]\d{1,2}(?=\s|$)|\d+年\s*\d{1,2}月\s*\d{1,2}日?)/);
+    return m ? m[1] : '';
+}
+
+/** 两个剧情日期是否为同一天（按 年/月/日 比较；无法解析时按原文比较） */
+export function sameStoryDate(a, b) {
+    const pa = parseStoryDate(extractLeadingDate(a) || String(a ?? ''));
+    const pb = parseStoryDate(extractLeadingDate(b) || String(b ?? ''));
+    if (pa?.type === 'standard' && pb?.type === 'standard') {
+        return pa.month === pb.month && pa.day === pb.day && (pa.year ?? null) === (pb.year ?? null);
+    }
+    return String(a ?? '').trim() === String(b ?? '').trim();
+}

@@ -3,7 +3,7 @@
  * 负责元数据的存储、解析、聚合
  */
 
-import { parseStoryDate, calculateRelativeTime, calculateDetailedRelativeTime, generateTimeReference, formatRelativeTime, formatFullDateTime, getRelativeTimeMeta, setCustomCalendar } from '../utils/timeUtils.js';
+import { parseStoryDate, calculateRelativeTime, calculateDetailedRelativeTime, generateTimeReference, formatRelativeTime, formatFullDateTime, getRelativeTimeMeta, setCustomCalendar, stripTimePlaceholders, extractLeadingDate } from '../utils/timeUtils.js';
 import { detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './i18n.js';
 import { getPromptDefaultSync } from './promptDefaults.js';
 import { baselineSteps, applyBaselineItems, applyBaselineStrongholds, isRecordActive } from './personaBootstrap.js';
@@ -1508,7 +1508,9 @@ class HoraeManager {
             
             // time:10/1 15:00 或 time:小镇历永夜2931年 2月1日(五) 20:30
             if (trimmedLine.startsWith('time:')) {
-                const timeStr = trimmedLine.substring(5).trim();
+                // 模型照抄的格式占位符（MM/DD、HH:MM…）一律丢弃，见 _guardTimestamp
+                const { text: timeStr, stripped } = stripTimePlaceholders(trimmedLine.substring(5));
+                if (stripped) result.timestamp._placeholderStripped = true;
                 // 从末尾分离 HH:MM 时钟时间
                 const clockMatch = timeStr.match(/\b(\d{1,2}:\d{2})\s*$/);
                 if (clockMatch) {
@@ -1798,6 +1800,24 @@ class HoraeManager {
             if (r.to) r.to = cleanEntityName(r.to);
         }
         return result;
+    }
+
+    /**
+     * 占位符兜底：time: 里的 MM/DD 等已在解析时去掉；若剩下的只有时段（如「放学后」），补上该楼层之前的日期，
+     * 避免把已知日期冲掉。之前也没有日期时只记时段。
+     */
+    _guardTimestamp(messageIndex, parsed) {
+        const ts = parsed?.timestamp;
+        if (!ts?._placeholderStripped) return;
+        delete ts._placeholderStripped;
+        const rest = String(ts.story_date || '').trim();
+        if (extractLeadingDate(rest)) return;
+        const chat = this.getChat() || [];
+        const before = this.getLatestState(Math.max(0, chat.length - messageIndex));
+        const prevDate = extractLeadingDate(before?.timestamp?.story_date || '');
+        if (!prevDate) return;
+        if (rest) ts.story_date = `${prevDate} ${rest}`;
+        else if (ts.story_time) ts.story_date = prevDate;
     }
 
     /** 将解析结果合并到元数据 */
@@ -3307,6 +3327,7 @@ class HoraeManager {
      * （processAIResponse 与后台分析共用，保证两种模式的合并语义一致）
      */
     applyParsedToMessage(messageIndex, parsed) {
+        this._guardTimestamp(messageIndex, parsed);
         const existingMeta = this.getMessageMeta(messageIndex);
         const newMeta = this.mergeParsedToMeta(existingMeta, parsed);
         
@@ -4726,7 +4747,8 @@ class HoraeManager {
         // time
         let match;
         while ((match = patterns.time.exec(message)) !== null) {
-            const timeStr = match[1].trim();
+            const { text: timeStr, stripped } = stripTimePlaceholders(match[1]);
+            if (stripped) result.timestamp._placeholderStripped = true;
             const clockMatch = timeStr.match(/\b(\d{1,2}:\d{2})\s*$/);
             if (clockMatch) {
                 result.timestamp.story_time = clockMatch[1];

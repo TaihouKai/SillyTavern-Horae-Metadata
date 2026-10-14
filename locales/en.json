@@ -168,6 +168,8 @@
         "autoFillPrevTimelineOnSend": "Auto-fill previous AI message timeline before send",
         "autoFillPrevTimelineOnSendHint": "Before sending, if the previous AI reply is missing <horae>/<horaeevent>, Horae performs a full AI analysis on that message using lightweight state, character identity, and the previous user action as context, then writes all extracted data back to chat history. This calls AI and is off by default.",
         "injectContext": "Auto-inject state context",
+        "followCanonClock": "Follow Canon Engine story clock",
+        "followCanonClockHint": "When Canon Engine is installed and enabled for this chat, background analysis uses its story clock as the time baseline, and Horae's current date follows it (only Horae's own data is changed). No effect when Canon Engine is absent or inactive.",
         "lorebookScanState": "Let lorebook keywords match the story time/location",
         "lorebookScanStateHint": "Lets lorebook entry keywords match Horae's current story date, time and location (e.g. the keyword 2020/01 triggers when the story date is 2020/01/10). This text is only used for the lorebook scan and is not sent to the model.",
         "useMainPresetForAiTasks": "Use Tavern main preset for background AI tasks",

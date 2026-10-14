@@ -32,7 +32,7 @@ test('nothing to scan gives an empty string', () => {
     assert.equal(buildLorebookScanText({ story_date: '', story_time: '', location: '' }), '');
 });
 
-test('analyzer prompts ask for YYYY/MM/DD calendar dates', () => {
-    assert.ok(DEFAULT_BG_PROMPT_ZH.includes('YYYY/MM/DD'));
-    assert.ok(DEFAULT_BG_PROMPT_EN.includes('YYYY/MM/DD'));
+test('analyzer prompts ask for year/month/day calendar dates', () => {
+    assert.ok(DEFAULT_BG_PROMPT_ZH.includes('2020/01/10'));
+    assert.ok(DEFAULT_BG_PROMPT_EN.includes('2020/01/10'));
 });

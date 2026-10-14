@@ -16,7 +16,7 @@ import * as stPowerUserModule from '/scripts/power-user.js';
 import { horaeManager, createEmptyMeta, getItemBaseName } from './core/horaeManager.js';
 import { vectorManager } from './core/vectorManager.js';
 import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH } from './core/bgAnalysis.js';
-import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText } from './utils/timeUtils.js';
+import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText, readCanonClock, formatCanonClockLine, sameStoryDate } from './utils/timeUtils.js';
 import { PB_META_KEY } from './core/personaBootstrap.js';
 import { createPersonaController } from './core/personaController.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
@@ -144,7 +144,8 @@ const DEFAULT_SETTINGS = {
     autoParse: true,
     autoFillPrevTimelineOnSend: false, // 发送前自动补全上一条AI消息的时间线（默认关闭，避免静默误写历史）
     injectContext: true,
-    lorebookScanState: true,  // 让世界书关键词能匹配 Horae 当前的剧情日期/时间/地点（只参与扫描，不发送）
+    lorebookScanState: true,
+    followCanonClock: true,   // Canon Engine 启用时：Horae 的当前日期跟随其故事时钟（只改 Horae 自己的数据）  // 让世界书关键词能匹配 Horae 当前的剧情日期/时间/地点（只参与扫描，不发送）
     useMainPresetForAiTasks: false, // AI分析/批量扫描/手动压缩是否使用酒馆主预设（generate）
     showMessagePanel: true,
     injectionDepthSource: 'system', // 注入深度来源: system(原逻辑) / preset(按完整提示词末尾偏移)
@@ -325,7 +326,7 @@ const PRESERVED_KEYS_ON_RESET = [
 // 配置档导出/导入/角色卡同步共用的字段白名单。
 // 故意排除 API URL/Key/Model、向量召回参数等本地敏感/环境相关字段，避免随卡分享时泄露凭据。
 const _SETTINGS_EXPORT_KEYS = [
-    'enabled', 'autoParse', 'autoFillPrevTimelineOnSend', 'injectContext', 'lorebookScanState', 'useMainPresetForAiTasks', 'showMessagePanel', 'showTopIcon',
+    'enabled', 'autoParse', 'autoFillPrevTimelineOnSend', 'injectContext', 'lorebookScanState', 'followCanonClock', 'useMainPresetForAiTasks', 'showMessagePanel', 'showTopIcon',
     'stateMode', 'bgAutoAnalyze', 'bgWaitBeforeSend', 'bgWaitTimeoutSec', 'customBgAnalysisPrompt',
     'injectionDepthSource', 'injectionPosition', 'timelineInjectionMode',
     'sendTimeline', 'contextDepth', 'sendCharacters', 'sendItems',
@@ -12613,6 +12614,7 @@ async function savePanelData(panelEl, messageId) {
 
     // 分离日期时间
     const datetimeVal = (panelEl.querySelector('.horae-input-datetime')?.value || '').trim();
+    _lastUserTimeEditAt = Date.now();
     const clockMatch = datetimeVal.match(/\b(\d{1,2}:\d{2})\s*$/);
     if (clockMatch) {
         meta.timestamp.story_time = clockMatch[1];
@@ -13254,6 +13256,12 @@ function initSettingsEvents() {
     $('#horae-setting-inject-context').on('change', function () {
         settings.injectContext = this.checked;
         saveSettings();
+    });
+
+    $('#horae-setting-follow-canon-clock').on('change', function () {
+        settings.followCanonClock = this.checked;
+        saveSettings();
+        if (this.checked) _syncCanonClock(readCanonClock());
     });
 
     $('#horae-setting-lorebook-scan').on('change', function () {
@@ -16071,6 +16079,7 @@ function syncSettingsToUI() {
     $('#horae-setting-auto-fill-prev-timeline').prop('checked', settings.autoFillPrevTimelineOnSend === true);
     $('#horae-setting-inject-context').prop('checked', settings.injectContext);
     $('#horae-setting-lorebook-scan').prop('checked', settings.lorebookScanState !== false);
+    $('#horae-setting-follow-canon-clock').prop('checked', settings.followCanonClock !== false);
     $('#horae-setting-use-main-preset').prop('checked', !!settings.useMainPresetForAiTasks);
     $('#horae-cardprofile-mode').val(settings.cardProfileMode ?? '');
     $('#horae-setting-show-panel').prop('checked', settings.showMessagePanel);
@@ -20667,6 +20676,61 @@ function _bgFindUserAction(chat, idx) {
     return { text: '', settled };
 }
 
+// ── Canon Engine 故事时钟（只读 window.CanonEngine.api.getClock 与 canon-engine:clock 事件；未安装时全部为空操作）──
+// Canon 先发布回复（此时 Horae 的渲染钩子执行），之后才提交并推进时钟：渲染时读到的是本条回复【开始】时的时间
+const _canonClockAtRender = new WeakMap();
+let _lastUserTimeEditAt = 0;
+const CANON_SYNC_EDIT_GRACE_MS = 10000;
+
+function _canonCaptureRenderClock(message) {
+    if (!message || message.is_user) return;
+    const clk = readCanonClock();
+    if (clk) _canonClockAtRender.set(message, { swipeId: message.swipe_id ?? 0, clk });
+    else _canonClockAtRender.delete(message);
+}
+
+function _lastStoryMessageIndex(chat) {
+    for (let i = (chat?.length || 0) - 1; i >= 0; i--) {
+        if (!chat[i]?.is_user && !chat[i]?.horae_meta?._skipHorae) return i;
+    }
+    return -1;
+}
+
+/** 分析提示词中的权威时钟行：渲染时捕获的开始时间；没有捕获时，末尾回复用 Canon 已提交（含该回复）的时间 */
+function _canonClockLineFor(chat, idx, zh) {
+    const message = chat[idx];
+    const cap = _canonClockAtRender.get(message);
+    if (cap && cap.swipeId === (message.swipe_id ?? 0)) return formatCanonClockLine(cap.clk, { zh, phase: 'start' });
+    if (idx === _lastStoryMessageIndex(chat)) {
+        const clk = readCanonClock();
+        if (clk) return formatCanonClockLine(clk, { zh, phase: 'end' });
+    }
+    return '';
+}
+
+/**
+ * 跟随 Canon Engine 时钟：Horae 当前日期缺失或与 Canon 不同时，把 Canon 的日期/时间写入最新一条回复的 Horae 元数据。
+ * 只改 Horae 自己的数据；用户刚编辑过时间时不覆盖。返回是否写入。
+ */
+function _syncCanonClock(clk, { save = true } = {}) {
+    if (!settings.enabled || settings.followCanonClock === false) return false;
+    if (!clk || clk.active !== true || !clk.date) return false;
+    if (Date.now() - _lastUserTimeEditAt < CANON_SYNC_EDIT_GRACE_MS) return false;
+    const chat = horaeManager.getChat();
+    const i = _lastStoryMessageIndex(chat);
+    if (i < 0) return false;
+    const cur = horaeManager.getLatestState()?.timestamp || {};
+    if (cur.story_date && sameStoryDate(cur.story_date, clk.date)) return false;
+    const message = chat[i];
+    if (!message.horae_meta) message.horae_meta = createEmptyMeta();
+    if (!message.horae_meta.timestamp) message.horae_meta.timestamp = { story_date: '', story_time: '', absolute: '' };
+    message.horae_meta.timestamp.story_date = clk.date;
+    message.horae_meta.timestamp.story_time = clk.time || '';
+    console.log(`[Horae] 跟随 Canon Engine 时钟：#${i} ${cur.story_date || '（无日期）'} → ${clk.date} ${clk.time || ''}`);
+    if (save) _bgAfterMetaChange(i, { rebuild: false }).catch(err => console.warn('[Horae] 保存 Canon 时钟同步失败:', err));
+    return true;
+}
+
 function _bgBuildPrompt(chat, idx) {
     const message = chat[idx];
     const ctx = getContext();
@@ -20676,7 +20740,9 @@ function _bgBuildPrompt(chat, idx) {
     const charName = ctx?.name2 || '';
 
     // 目标楼层之前的状态快照（只读，含 RPG / 物品 / NPC / 表格等），skipLast 截到目标楼层
-    const stateText = horaeManager.generateCompactPrompt(Math.max(0, chat.length - idx), { audience: 'analyzer' });
+    let stateText = horaeManager.generateCompactPrompt(Math.max(0, chat.length - idx), { audience: 'analyzer' });
+    const canonLine = _canonClockLineFor(chat, idx, zh);
+    if (canonLine) stateText = stateText ? `${canonLine}\n\n${stateText}` : canonLine;
 
     const action = _bgFindUserAction(chat, idx);
     let userBlock;
@@ -20824,6 +20890,8 @@ async function _bgCommit(job, result) {
         try { _bgRebuildAggregates(); } catch (_) { /* ignore */ }
         throw err;
     }
+    // 最新回复的分析结果与 Canon 已提交的日期不一致时以 Canon 为准（两者先后到达，结果一致）
+    if (idx === _lastStoryMessageIndex(chat)) _syncCanonClock(readCanonClock(), { save: false });
     await _bgAfterMetaChange(idx, { rebuild: false });
     console.log(`[Horae][BG] #${idx} 提交完成: ${result.kind === 'changes' ? '有变化' : '无变化'}${outcome.rebuilt ? '（已重放聚合）' : ''}`);
 }
@@ -21317,6 +21385,7 @@ function _sanitizeThinkBlockHoraeTags(mes) {
  */
 async function onMessageReceived(messageId, type) {
     if (!settings.enabled) return;
+    _canonCaptureRenderClock(horaeManager.getChat()?.[messageId]);
     if (_isMetadataMode()) {
         _autoSummaryRanThisTurn = false;
         _bgMainGenerating = false;
@@ -22561,6 +22630,11 @@ jQuery(async () => {
     if (typeof eventSource.makeFirst === 'function') eventSource.makeFirst(event_types.GENERATION_AFTER_COMMANDS, _pbPreflightListener);
     else eventSource.on(event_types.GENERATION_AFTER_COMMANDS, _pbPreflightListener);
     if (event_types.PERSONA_CHANGED) eventSource.on(event_types.PERSONA_CHANGED, () => personaController.renderStatus());
+
+    // Canon Engine 时钟变化（提交回复、换聊天、手动改时间）：Horae 的当前日期跟随（只读事件，未安装时不会触发）
+    document.addEventListener('canon-engine:clock', (e) => {
+        try { _syncCanonClock(e?.detail); } catch (err) { console.warn('[Horae] Canon 时钟同步异常:', err); }
+    });
 
     // 世界书扫描早于 CHAT_COMPLETION_PROMPT_READY：在这里先登记当前剧情时间/地点，让世界书关键词能匹配到
     eventSource.on(event_types.GENERATION_AFTER_COMMANDS, async (type, _params, dryRun) => {
