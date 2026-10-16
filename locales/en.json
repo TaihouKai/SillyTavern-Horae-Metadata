@@ -368,6 +368,8 @@
         "auxApiModel": "Model",
         "auxApiFetchModelsHint": "Fill in URL and key, then click to fetch available models.",
         "auxApiUseForAnalysis": "AI analysis, magic wand, and pre-send fill",
+        "auxApiJsonOutput": "Background analysis replies as JSON (Venice models that support it)",
+        "auxApiJsonOutputHint": "The API enforces the reply structure, so the analyzer can no longer forget the <horae> tags. Used only when the auxiliary API is Venice and the model lists JSON schema support; otherwise the tag format is used.",
         "auxApiUseForSummary": "Auto-summary and AI smart enrich",
         "auxApiUseForManualCompress": "Manual multi-select compression",
         "auxApiManualCompressHint": "If the auxiliary API cannot bypass limits, disable this and use the native Tavern channel with the main preset.",

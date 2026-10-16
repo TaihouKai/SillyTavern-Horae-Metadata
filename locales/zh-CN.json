@@ -368,6 +368,8 @@
         "auxApiModel": "模型",
         "auxApiFetchModelsHint": "填好地址和密钥后点击拉取可用模型列表。",
         "auxApiUseForAnalysis": "AI 分析、魔术棒、发送前补全",
+        "auxApiJsonOutput": "后台分析以 JSON 回复（支持的 Venice 模型）",
+        "auxApiJsonOutputHint": "由接口强制回复结构，分析器不会再漏写 <horae> 标签。仅在辅助 API 为 Venice 且该模型声明支持 JSON schema 时使用，否则仍用标签格式。",
         "auxApiUseForSummary": "自动总结与 AI 智能补全",
         "auxApiUseForManualCompress": "手动多选压缩",
         "auxApiManualCompressHint": "若辅助 API 破限不足，建议关闭此项，改走酒馆原生通道并带上主预设。",

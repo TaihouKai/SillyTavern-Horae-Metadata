@@ -208,6 +208,79 @@ test('scheduler: API exception is recorded as failure', async () => {
     assert.match(h.failures[0].reason, /API/);
 });
 
+// ---------- JSON 输出模式 ----------
+
+test('json: envelope fields are parsed like the tag blocks', () => {
+    setup([msg('greeting')]);
+    const raw = JSON.stringify({
+        notes: '她们到了教会。',
+        horae: 'time:2020/09/18 20:00\nlocation:冬木市·教会\ncharacters:尤丝蒂娜',
+        event: 'event:重要|尤丝蒂娜抵达教会',
+        rpg: 'hp:尤丝蒂娜=84/100',
+        tables: [],
+    });
+    const r = parse(raw);
+    assert.equal(r.kind, 'changes');
+    assert.equal(r.parsed.scene.location, '冬木市·教会');
+    assert.equal(r.parsed.timestamp.story_date, '2020/09/18');
+    assert.equal(r.parsed.events.length, 1);
+    assert.deepEqual(r.parsed.rpg.bars['尤丝蒂娜'].hp, [84, 100]);
+});
+
+test('json: notes are never parsed as state', () => {
+    setup([msg('greeting')]);
+    const r = parse(JSON.stringify({ notes: 'location:假地点\nitem:假物品', horae: '', event: '', rpg: '', tables: [] }));
+    assert.equal(r.kind, 'nochange');
+});
+
+test('json: all fields empty means no change', () => {
+    assert.equal(bg.unwrapJsonEnvelope(JSON.stringify({ notes: null, horae: '', event: '', rpg: '', tables: [] })).text, '<horaenochange/>');
+});
+
+test('json: tables become <horaetable:name> blocks; tags already inside a field are kept', () => {
+    const out = bg.unwrapJsonEnvelope(JSON.stringify({
+        notes: null, horae: '<horae>\nlocation:教会\n</horae>', event: '', rpg: '',
+        tables: [{ name: '任务', rows: '1,1:找到钥匙' }, { name: '空表', rows: '' }],
+    })).text;
+    assert.match(out, /^<horae>\nlocation:教会\n<\/horae>/);
+    assert.match(out, /<horaetable:任务>\n1,1:找到钥匙\n<\/horaetable>/);
+    assert.doesNotMatch(out, /空表/);
+    assert.doesNotMatch(out, /<horae>\s*<horae>/);
+});
+
+test('json: code fences are tolerated; truncated JSON is invalid; non-JSON falls back to tags', () => {
+    setup([msg('greeting')]);
+    const fenced = '```json\n' + JSON.stringify({ notes: null, horae: 'location:教会', event: '', rpg: '', tables: [] }) + '\n```';
+    assert.equal(parse(fenced).kind, 'changes');
+    const cut = parse('{"notes":null,"horae":"time:2020/09/18 20:00\\nlocation:冬木');
+    assert.equal(cut.kind, 'invalid');
+    assert.match(cut.reason, /invalid JSON/);
+    assert.equal(parse('<horae>\nlocation:教会\n</horae>').kind, 'changes');
+    const other = parse('{"answer":"location:教会"}');
+    assert.equal(other.kind, 'invalid');
+    assert.match(other.reason, /none of the horae/);
+});
+
+test('json: schema is strict-mode valid (every property required, no extra properties)', () => {
+    const walk = (s) => {
+        if (s?.type === 'object') {
+            assert.equal(s.additionalProperties, false);
+            assert.deepEqual([...s.required].sort(), Object.keys(s.properties).sort());
+            Object.values(s.properties).forEach(walk);
+        }
+        if (s?.type === 'array') walk(s.items);
+    };
+    walk(bg.BG_JSON_RESPONSE_FORMAT.json_schema.schema);
+    assert.equal(bg.BG_JSON_RESPONSE_FORMAT.json_schema.strict, true);
+});
+
+test('json: envelope notice exists in both languages and names every field', () => {
+    for (const zh of [false, true]) {
+        const n = bg.buildJsonEnvelopeNotice(zh);
+        for (const k of ['"horae"', '"event"', '"rpg"', '"tables"', '"notes"']) assert.ok(n.includes(k), `${zh ? 'zh' : 'en'} ${k}`);
+    }
+});
+
 test('parse: an opened but unclosed <horae> block is reported as cut off', () => {
     const r = parse('<horae>\ntime:2020/09/18 20:00\nlocation:便利');
     assert.equal(r.kind, 'invalid');

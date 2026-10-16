@@ -55,6 +55,118 @@ const NO_CHANGE_RE = /<horae[_-]?nochange\s*\/?>|<horae[_-]?nochange>\s*<\/horae
 const ANY_HORAE_BLOCK_RE = /<horae(?:event|rpg|table[:：][^>]*)?>[\s\S]*?<\/horae(?:event|rpg|table(?:[:：][^>]*)?)?>/i;
 const OPEN_HORAE_TAG_RE = /<horae(?:event|rpg|table[:：][^>]*)?>/i;
 
+/**
+ * JSON 输出模式：由接口按 schema 强制回复结构（Venice 等支持 response_format 的模型）。
+ * 字段内容就是原来各标签块里的行，解析前再包回标签，交给同一个解析器。
+ */
+export const BG_JSON_RESPONSE_FORMAT = Object.freeze({
+    type: 'json_schema',
+    json_schema: {
+        name: 'horae_state',
+        strict: true,
+        schema: {
+            type: 'object',
+            properties: {
+                notes: { type: ['string', 'null'] },
+                horae: { type: 'string' },
+                event: { type: 'string' },
+                rpg: { type: 'string' },
+                tables: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: { name: { type: 'string' }, rows: { type: 'string' } },
+                        required: ['name', 'rows'],
+                        additionalProperties: false,
+                    },
+                },
+            },
+            required: ['notes', 'horae', 'event', 'rpg', 'tables'],
+            additionalProperties: false,
+        },
+    },
+});
+
+const JSON_ENVELOPE_KEYS = ['horae', 'event', 'rpg', 'tables'];
+
+function _fieldText(v) {
+    if (v == null) return '';
+    if (Array.isArray(v)) return v.map(_fieldText).filter(Boolean).join('\n');
+    if (typeof v === 'object') return '';
+    return String(v).trim();
+}
+
+function _wrapBlock(tag, value) {
+    const s = _fieldText(value);
+    if (!s) return '';
+    // 模型把标签也写进了字段：原样使用
+    if (new RegExp(`<${tag}>`, 'i').test(s)) return s;
+    return `<${tag}>\n${s}\n</${tag}>`;
+}
+
+/**
+ * 把 JSON 输出模式的回复还原成标签文本。
+ * @returns {null | {text:string} | {error:string}} 不是 JSON 时返回 null（按标签格式解析）
+ */
+export function unwrapJsonEnvelope(text) {
+    let s = String(text ?? '').trim();
+    const fence = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+    if (fence) s = fence[1].trim();
+    if (!s.startsWith('{')) return null;
+    let obj;
+    try {
+        obj = JSON.parse(s);
+    } catch {
+        const end = s.lastIndexOf('}');
+        try { obj = end > 0 ? JSON.parse(s.slice(0, end + 1)) : null; } catch { obj = null; }
+        if (!obj) return { error: 'invalid JSON reply (cut off, e.g. output token limit reached?)' };
+    }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj) || !JSON_ENVELOPE_KEYS.some(k => k in obj)) {
+        return { error: 'JSON reply has none of the horae/event/rpg/tables fields' };
+    }
+    const parts = [_wrapBlock('horae', obj.horae), _wrapBlock('horaeevent', obj.event), _wrapBlock('horaerpg', obj.rpg)];
+    const tables = obj.tables;
+    if (Array.isArray(tables)) {
+        for (const tb of tables) {
+            const name = _fieldText(tb?.name);
+            const rows = _fieldText(tb?.rows);
+            if (!rows) continue;
+            if (/<horaetable[:：]/i.test(rows)) parts.push(rows);
+            else if (name) parts.push(`<horaetable:${name}>\n${rows}\n</horaetable>`);
+        }
+    } else if (/<horaetable[:：]/i.test(_fieldText(tables))) {
+        parts.push(_fieldText(tables));
+    }
+    const out = parts.filter(Boolean).join('\n');
+    return { text: out || '<horaenochange/>' };
+}
+
+/** JSON 输出模式下追加在提示词末尾的说明（原格式说明保持不变，只改「怎么交」） */
+export function buildJsonEnvelopeNotice(zh) {
+    if (zh) {
+        return `
+
+═══ 以 JSON 回复 ═══
+你的回复是一个 JSON 对象（结构由接口强制）。上面格式中的每个标签块，把块【里面的行】写进对应字段，不要写标签本身：
+- "horae"：<horae>…</horae> 里的行（多行用换行分隔）
+- "event"：<horaeevent>…</horaeevent> 里的行
+- "rpg"：<horaerpg>…</horaerpg> 里的行
+- "tables"：每个 <horaetable:表名> 块一项：{"name":"表名","rows":"块里的行"}
+- "notes"：可选的简短备注（最多一两句，程序不读取），没有就写 null
+本来会省略的块，对应字段写 "" 或 []。本来该输出 <horaenochange/> 时，所有字段都留空。`;
+    }
+    return `
+
+=== Reply as JSON ===
+Your reply is a JSON object (its structure is enforced). For every tag block in the format above, put the lines INSIDE the block into the matching field, without the tags themselves:
+- "horae": the lines inside <horae>…</horae> (one per line, separated by newlines)
+- "event": the lines inside <horaeevent>…</horaeevent>
+- "rpg": the lines inside <horaerpg>…</horaerpg>
+- "tables": one entry per <horaetable:Name> block: {"name":"Name","rows":"the lines inside"}
+- "notes": optional brief notes (one or two sentences at most; not read by the program), or null
+Use "" or [] for any block you would omit. Where you would output <horaenochange/>, leave every field empty.`;
+}
+
 /** 格式无效的回复最多重新请求的次数（只针对格式，不针对网络/接口错误） */
 export const BG_FORMAT_RETRIES = 1;
 
@@ -127,6 +239,11 @@ export function parseBgResponse(raw, parseTag) {
     // 思维链不参与解析
     text = text.replace(/<think(?:ing)?[\s>][\s\S]*?<\/think(?:ing)?>/gi, '').trim();
     if (!text) return { kind: 'invalid', reason: 'empty response' };
+
+    // JSON 输出模式：先还原成标签文本
+    const env = unwrapJsonEnvelope(text);
+    if (env?.error) return { kind: 'invalid', reason: env.error };
+    if (env) text = env.text;
 
     const hasBlock = ANY_HORAE_BLOCK_RE.test(text);
     const hasNoChange = NO_CHANGE_RE.test(text);

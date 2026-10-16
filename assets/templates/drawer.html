@@ -713,6 +713,13 @@
                             </label>
                         </div>
                         <div class="horae-setting-item">
+                            <label data-i18n="settings.auxApiJsonOutput">
+                                <input type="checkbox" id="horae-setting-aux-api-json" checked>
+                                后台分析以 JSON 回复（支持的 Venice 模型）
+                            </label>
+                            <span class="horae-setting-sub-hint" data-i18n="settings.auxApiJsonOutputHint">由接口强制回复结构，分析器不会再漏写 &lt;horae&gt; 标签。仅在辅助 API 为 Venice 且该模型声明支持 JSON schema 时使用，否则仍用标签格式。</span>
+                        </div>
+                        <div class="horae-setting-item">
                             <label data-i18n="settings.auxApiUseForSummary">
                                 <input type="checkbox" id="horae-setting-aux-api-summary">
                                 自动总结与 AI 智能补全

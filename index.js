@@ -15,7 +15,7 @@ import * as stPowerUserModule from '/scripts/power-user.js';
 
 import { horaeManager, createEmptyMeta, getItemBaseName } from './core/horaeManager.js';
 import { vectorManager } from './core/vectorManager.js';
-import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH } from './core/bgAnalysis.js';
+import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH, BG_JSON_RESPONSE_FORMAT, buildJsonEnvelopeNotice } from './core/bgAnalysis.js';
 import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText, readCanonClock, formatCanonClockLine, sameStoryDate } from './utils/timeUtils.js';
 import { PB_META_KEY } from './core/personaBootstrap.js';
 import { createPersonaController } from './core/personaController.js';
@@ -144,8 +144,8 @@ const DEFAULT_SETTINGS = {
     autoParse: true,
     autoFillPrevTimelineOnSend: false, // 发送前自动补全上一条AI消息的时间线（默认关闭，避免静默误写历史）
     injectContext: true,
-    lorebookScanState: true,
-    followCanonClock: true,   // Canon Engine 启用时：Horae 的当前日期跟随其故事时钟（只改 Horae 自己的数据）  // 让世界书关键词能匹配 Horae 当前的剧情日期/时间/地点（只参与扫描，不发送）
+    lorebookScanState: true,  // 让世界书关键词能匹配 Horae 当前的剧情日期/时间/地点（只参与扫描，不发送）
+    followCanonClock: true,   // Canon Engine 启用时：Horae 的当前日期跟随其故事时钟（只改 Horae 自己的数据）
     useMainPresetForAiTasks: false, // AI分析/批量扫描/手动压缩是否使用酒馆主预设（generate）
     showMessagePanel: true,
     injectionDepthSource: 'system', // 注入深度来源: system(原逻辑) / preset(按完整提示词末尾偏移)
@@ -209,6 +209,7 @@ const DEFAULT_SETTINGS = {
     auxApiKey: '',                   // 辅助API密钥
     auxApiModel: '',                 // 辅助API模型名称
     auxApiUseForAnalysis: true,      // AI分析/魔术棒/发送前补全
+    auxApiJsonOutput: true,          // 后台分析在支持的模型上以 JSON schema 强制回复结构
     auxApiUseForSummary: true,       // 自动总结/AI智能补全
     auxApiUseForManualCompress: false, // 手动多选压缩
     auxApiFallbackToMain: false,     // 辅助API失败后回退主API
@@ -306,7 +307,7 @@ const PROMPT_SETTING_KEYS = [
 const PRESERVED_KEYS_ON_RESET = [
     ...PROMPT_SETTING_KEYS,
     'auxApiUrl', 'auxApiKey', 'auxApiModel', 'auxApiEnabled',
-    'auxApiUseForAnalysis', 'auxApiUseForSummary',
+    'auxApiUseForAnalysis', 'auxApiUseForSummary', 'auxApiJsonOutput',
     'auxApiUseForManualCompress', 'auxApiFallbackToMain',
     'vectorEnabled', 'vectorSource', 'vectorModel', 'vectorDtype',
     'vectorApiUrl', 'vectorApiKey', 'vectorApiModel',
@@ -14494,6 +14495,10 @@ function initSettingsEvents() {
         settings.auxApiUseForAnalysis = this.checked;
         saveSettings();
     });
+    $('#horae-setting-aux-api-json').on('change', function () {
+        settings.auxApiJsonOutput = this.checked;
+        saveSettings();
+    });
     $('#horae-setting-aux-api-summary').on('change', function () {
         settings.auxApiUseForSummary = this.checked;
         saveSettings();
@@ -16173,6 +16178,7 @@ function syncSettingsToUI() {
     $('#horae-setting-aux-api-url').val(settings.auxApiUrl || '');
     $('#horae-setting-aux-api-key').val(settings.auxApiKey || '');
     $('#horae-setting-aux-api-analysis').prop('checked', settings.auxApiUseForAnalysis !== false);
+    $('#horae-setting-aux-api-json').prop('checked', settings.auxApiJsonOutput !== false);
     $('#horae-setting-aux-api-summary').prop('checked', settings.auxApiUseForSummary !== false);
     $('#horae-setting-aux-api-manual-compress').prop('checked', !!settings.auxApiUseForManualCompress);
     $('#horae-setting-aux-api-fallback').prop('checked', !!settings.auxApiFallbackToMain);
@@ -16773,6 +16779,8 @@ async function _generateForAuxTask(prompt, opts = {}) {
                     kind,
                     timeoutMs: rawOpts.timeoutMs,
                     temperature: rawOpts.temperature,
+                    responseFormat: rawOpts.responseFormat,
+                    onResponseFormatRejected: rawOpts.onResponseFormatRejected,
                 }));
             } catch (err) {
                 if (forbidFallback || !settings.auxApiFallbackToMain) throw err;
@@ -17878,7 +17886,18 @@ async function generateWithDirectApi(prompt, profile = null, opts = {}) {
         return `finish_reason=${choice?.finish_reason || '?'}, reasoning ${reasoning.length} chars, completion_tokens=${data?.usage?.completion_tokens ?? '?'}`;
     };
 
-    let data = await send();
+    if (opts.responseFormat) body.response_format = opts.responseFormat;
+    let data;
+    try {
+        data = await send();
+    } catch (err) {
+        // 接口不接受 response_format：去掉后重发一次（提示词里的 JSON 说明仍在，解析两种格式都认）
+        if (!body.response_format || !/^独立API (400|422)\b/.test(String(err?.message || ''))) throw err;
+        console.warn('[Horae] 独立API拒绝 response_format，改为普通输出重试:', err.message);
+        delete body.response_format;
+        opts.onResponseFormatRejected?.();
+        data = await send();
+    }
     let content = data?.choices?.[0]?.message?.content || '';
     // 推理模型可能把输出额度全花在思考上、正文为空：Venice 上关闭思考重试一次
     if (!String(content).trim() && isVenice) {
@@ -20786,9 +20805,12 @@ async function _bgRequestAnalysis(job, retry = null) {
     const idx = chat.indexOf(job.message);
     if (idx < 0) throw new Error('message no longer in chat');
     let prompt = _bgBuildPrompt(chat, idx);
+    // 支持的模型以 JSON schema 强制回复结构；格式说明不变，只在末尾说明怎么装进 JSON
+    const jsonMode = await _bgJsonOutputAvailable();
+    if (jsonMode) prompt += buildJsonEnvelopeNotice(_bgPromptIsZh());
     // 上一次回复格式无效：在末尾说明原因，要求只输出数据块
-    if (retry?.retry) prompt += _bgRetryNotice(retry.previousError);
-    console.log(`[Horae][BG] 分析 #${idx} (swipe ${job.swipeId}, fp ${job.fp}, reason ${job.reason}${retry?.retry ? `, retry ${retry.retry}` : ''})`);
+    if (retry?.retry) prompt += _bgRetryNotice(retry.previousError, jsonMode);
+    console.log(`[Horae][BG] 分析 #${idx} (swipe ${job.swipeId}, fp ${job.fp}, reason ${job.reason}${jsonMode ? ', json' : ''}${retry?.retry ? `, retry ${retry.retry}` : ''})`);
     let timer = null;
     const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error(`timeout after ${BG_REQUEST_TIMEOUT_MS / 1000}s`)), BG_REQUEST_TIMEOUT_MS + 5000);
@@ -20802,6 +20824,10 @@ async function _bgRequestAnalysis(job, retry = null) {
                 forceRaw: true,
                 timeoutMs: BG_REQUEST_TIMEOUT_MS,
                 temperature: 0.3,
+                ...(jsonMode ? {
+                    responseFormat: BG_JSON_RESPONSE_FORMAT,
+                    onResponseFormatRejected: () => _bgMarkJsonUnsupported(),
+                } : {}),
             }),
             timeout,
         ]);
@@ -20812,10 +20838,65 @@ async function _bgRequestAnalysis(job, retry = null) {
     }
 }
 
-function _bgRetryNotice(previousError) {
+function _bgPromptIsZh() {
     const lang = detectEffectiveAiLang(settings);
-    const zh = lang === 'zh-CN' || lang === 'zh-TW';
-    const cut = /unclosed/.test(String(previousError || ''));
+    return lang === 'zh-CN' || lang === 'zh-TW';
+}
+
+// JSON 输出能力按「地址|模型」缓存；读取失败的结果 10 分钟后重查
+const _bgJsonSupport = new Map();
+const BG_JSON_RECHECK_MS = 10 * 60 * 1000;
+
+function _bgJsonProfileKey() {
+    const p = _getAuxApiProfile();
+    return `${p.apiUrl}|${p.model}`;
+}
+
+function _bgMarkJsonUnsupported() {
+    _bgJsonSupport.set(_bgJsonProfileKey(), { ok: false, at: Date.now() });
+}
+
+/** 后台分析是否走 JSON 输出：仅辅助 API 为 Venice 且该模型声明 supportsResponseSchema */
+async function _bgJsonOutputAvailable() {
+    _syncSubApiSettingsFromDom();
+    if (settings.auxApiJsonOutput === false || !_shouldUseAuxApi('analysis')) return false;
+    const p = _getAuxApiProfile();
+    if (!p.apiUrl || !p.apiKey || !p.model || /gemini/i.test(p.model)) return false;
+    if (!/^https?:\/\/([^/]*\.)?venice\.ai(?=[/:]|$)/i.test(p.apiUrl)) return false;
+    const key = _bgJsonProfileKey();
+    const hit = _bgJsonSupport.get(key);
+    if (hit && (hit.ok !== null || Date.now() - hit.at < BG_JSON_RECHECK_MS)) return !!hit.ok;
+    let ok = null;
+    try {
+        const base = p.apiUrl.replace(/\/+$/, '').replace(/\/chat\/completions$/i, '');
+        const resp = await fetch(`${base}/models?type=text`, {
+            headers: { 'Authorization': `Bearer ${p.apiKey}` },
+            signal: AbortSignal.timeout(15000),
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            const model = (data?.data || []).find(m => m?.id === p.model);
+            ok = !!model?.model_spec?.capabilities?.supportsResponseSchema;
+        } else {
+            console.warn(`[Horae][BG] 读取 Venice 模型能力失败: HTTP ${resp.status}`);
+        }
+    } catch (err) {
+        console.warn('[Horae][BG] 读取 Venice 模型能力失败:', err?.message || err);
+    }
+    _bgJsonSupport.set(key, { ok, at: Date.now() });
+    console.log(`[Horae][BG] ${p.model} JSON 输出: ${ok === null ? '未知（按标签格式）' : ok ? '支持' : '不支持（按标签格式）'}`);
+    return !!ok;
+}
+
+function _bgRetryNotice(previousError, jsonMode = false) {
+    const zh = _bgPromptIsZh();
+    const reason = String(previousError || '');
+    if (jsonMode) {
+        return zh
+            ? `\n\n【重试】你上一次的回复无法读取（${reason}）。这次请完整输出上面说明的 JSON 对象。`
+            : `\n\n[Retry] Your previous reply could not be read (${reason}). This time output the complete JSON object described above.`;
+    }
+    const cut = /unclosed/.test(reason);
     if (zh) {
         return `\n\n【重试】你上一次的回复无法读取：${cut ? '<horae> 块没有闭合（输出被截断）' : '没有 <horae> 块，也没有 <horaenochange/>'}。这次不要写正文、解释或思考过程，直接输出上面格式的 <horae>…</horae> 块（以及需要的其他块），并且一定要写闭合标签。`;
     }
