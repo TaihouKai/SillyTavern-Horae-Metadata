@@ -53,6 +53,17 @@ export function isMessageAnalyzed(message) {
 
 const NO_CHANGE_RE = /<horae[_-]?nochange\s*\/?>|<horae[_-]?nochange>\s*<\/horae[_-]?nochange>/i;
 const ANY_HORAE_BLOCK_RE = /<horae(?:event|rpg|table[:：][^>]*)?>[\s\S]*?<\/horae(?:event|rpg|table(?:[:：][^>]*)?)?>/i;
+const OPEN_HORAE_TAG_RE = /<horae(?:event|rpg|table[:：][^>]*)?>/i;
+
+/** 格式无效的回复最多重新请求的次数（只针对格式，不针对网络/接口错误） */
+export const BG_FORMAT_RETRIES = 1;
+
+/** 日志用：截取原始回复首尾，便于看出模型到底返回了什么 */
+export function previewRaw(raw, max = 300) {
+    const s = String(raw ?? '').replace(/\s+/g, ' ').trim();
+    if (s.length <= max * 2) return s;
+    return `${s.slice(0, max)} … ${s.slice(-max)} (${s.length} chars)`;
+}
 
 /** 解析结果里是否真的含有状态数据 */
 export function hasMeaningfulParsed(parsed) {
@@ -121,6 +132,8 @@ export function parseBgResponse(raw, parseTag) {
     const hasNoChange = NO_CHANGE_RE.test(text);
     if (!hasBlock) {
         if (hasNoChange) return { kind: 'nochange' };
+        // 有开标签没闭合：多半是输出额度用完被截断（推理模型的思考也计入额度）
+        if (OPEN_HORAE_TAG_RE.test(text)) return { kind: 'invalid', reason: 'unclosed <horae> block (reply was cut off, e.g. output token limit reached)' };
         return { kind: 'invalid', reason: 'no <horae>/<horaeevent>/<horaerpg>/<horaetable> block or <horaenochange/> marker' };
     }
 
@@ -261,7 +274,8 @@ export function applyAnalysisResult(manager, idx, result, job, hooks = {}) {
  * deps:
  *  - getChat(): 当前 chat 数组
  *  - getChatKey(): 当前聊天唯一标识（chatId + groupId）
- *  - analyze(job): Promise<string> 发起辅助模型请求，返回原始文本
+ *  - analyze(job, retry?): Promise<string> 发起辅助模型请求，返回原始文本；格式无效重试时 retry = {retry, previousError}
+ *  - formatRetries: 可选，格式无效时的重试次数（默认 BG_FORMAT_RETRIES）
  *  - parse(raw): parseBgResponse 结果
  *  - commit(job, result): 将结果写入 job.message（同步或异步）；仅在校验通过后调用
  *  - markFailed(job, reason): 写入失败标记
@@ -471,8 +485,30 @@ export class BackgroundAnalyzer {
             return;
         }
 
-        const result = this.deps.parse(raw);
+        let result = this.deps.parse(raw);
+        // 格式无效通常是偶发的（模型漏写标签、被截断）：带上失败原因重新请求一次
+        const maxRetries = this.deps.formatRetries ?? BG_FORMAT_RETRIES;
+        for (let attempt = 1; result.kind === 'invalid' && attempt <= maxRetries; attempt++) {
+            this._log('warn', `invalid analysis response (${result.reason}), retrying ${attempt}/${maxRetries}. Raw: ${previewRaw(raw)}`);
+            try {
+                raw = await this.deps.analyze(job, { retry: attempt, previousError: result.reason });
+            } catch (err) {
+                const reason = err?.message || String(err || 'unknown error');
+                if (!this.isJobCurrent(job)) { this._emit(job, 'stale'); return; }
+                this._log('warn', `analysis retry request failed: ${reason}`);
+                await this.deps.markFailed(job, reason);
+                this._emit(job, 'failed', { reason });
+                return;
+            }
+            if (!this.isJobCurrent(job)) {
+                this._log('info', 'discarding stale analysis result');
+                this._emit(job, 'stale');
+                return;
+            }
+            result = this.deps.parse(raw);
+        }
         if (result.kind === 'invalid') {
+            this._log('warn', `invalid analysis response, giving up. Raw: ${previewRaw(raw)}`);
             this._log('warn', `invalid analysis response: ${result.reason}`);
             await this.deps.markFailed(job, result.reason);
             this._emit(job, 'failed', { reason: result.reason });

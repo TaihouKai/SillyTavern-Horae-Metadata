@@ -17888,6 +17888,7 @@ async function generateWithDirectApi(prompt, profile = null, opts = {}) {
         content = data?.choices?.[0]?.message?.content || '';
     }
     if (!String(content).trim()) console.warn(`[Horae] 独立API返回空正文（${describeEmpty(data)}）`);
+    else if (data?.choices?.[0]?.finish_reason === 'length') console.warn(`[Horae] 独立API输出达到 max_tokens 上限被截断（${describeEmpty(data)}）`);
     return content;
 }
 
@@ -20640,7 +20641,7 @@ let _bgMainGenerating = false;
 const bgAnalyzer = new BackgroundAnalyzer({
     getChat: () => horaeManager.getChat(),
     getChatKey: _bgChatKey,
-    analyze: (job) => _bgRequestAnalysis(job),
+    analyze: (job, retry) => _bgRequestAnalysis(job, retry),
     parse: (raw) => parseBgResponse(raw, (text) => horaeManager.parseHoraeTag(text)),
     commit: (job, result) => _bgCommit(job, result),
     markFailed: (job, reason) => _bgMarkFailed(job, reason),
@@ -20780,12 +20781,14 @@ function _bgBuildPrompt(chat, idx) {
         (_m, k) => values[k.toLowerCase()] ?? '');
 }
 
-async function _bgRequestAnalysis(job) {
+async function _bgRequestAnalysis(job, retry = null) {
     const chat = horaeManager.getChat();
     const idx = chat.indexOf(job.message);
     if (idx < 0) throw new Error('message no longer in chat');
-    const prompt = _bgBuildPrompt(chat, idx);
-    console.log(`[Horae][BG] 分析 #${idx} (swipe ${job.swipeId}, fp ${job.fp}, reason ${job.reason})`);
+    let prompt = _bgBuildPrompt(chat, idx);
+    // 上一次回复格式无效：在末尾说明原因，要求只输出数据块
+    if (retry?.retry) prompt += _bgRetryNotice(retry.previousError);
+    console.log(`[Horae][BG] 分析 #${idx} (swipe ${job.swipeId}, fp ${job.fp}, reason ${job.reason}${retry?.retry ? `, retry ${retry.retry}` : ''})`);
     let timer = null;
     const timeout = new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error(`timeout after ${BG_REQUEST_TIMEOUT_MS / 1000}s`)), BG_REQUEST_TIMEOUT_MS + 5000);
@@ -20807,6 +20810,16 @@ async function _bgRequestAnalysis(job) {
     } finally {
         clearTimeout(timer);
     }
+}
+
+function _bgRetryNotice(previousError) {
+    const lang = detectEffectiveAiLang(settings);
+    const zh = lang === 'zh-CN' || lang === 'zh-TW';
+    const cut = /unclosed/.test(String(previousError || ''));
+    if (zh) {
+        return `\n\n【重试】你上一次的回复无法读取：${cut ? '<horae> 块没有闭合（输出被截断）' : '没有 <horae> 块，也没有 <horaenochange/>'}。这次不要写正文、解释或思考过程，直接输出上面格式的 <horae>…</horae> 块（以及需要的其他块），并且一定要写闭合标签。`;
+    }
+    return `\n\n[Retry]Your previous reply could not be read: ${cut ? 'the <horae> block was never closed (the output was cut off)' : 'it contained no <horae> block and no <horaenochange/>'}. This time write no story text, explanation or reasoning; output only the <horae>…</horae> block (plus any other blocks needed) in the format above, and always write the closing tags.`;
 }
 
 /**

@@ -1,0 +1,177 @@
+===== system =====
+You are a strict information extraction engine for narrative passages. Follow every instruction in the user message verbatim and output only the requested structured tag blocks (such as <horae>...</horae> and <horaeevent>...</horaeevent>). Do not add prose, explanations, or summaries.
+
+===== assistant =====
+Understood. I will follow the user instructions and output only the requested structured tag blocks.
+
+===== user =====
+[Horae Background State Analyzer]
+You are an independent state recorder, NOT the story author. Read ONE completed story reply (plus the user action that preceded it), identify the ESTABLISHED state changes, and output them in the private data format below. Your output is read only by a program and never appears in the story.
+
+=== Core rules ===
+1. Record only facts that actually happened. Do NOT record suggestions, planned or intended actions, hypotheticals, conditional outcomes, imagined scenes, lies told in dialogue, or user actions that have not been carried out.
+2. Scene basics (time / location / characters / costume) are written EVERY time, as the current values after this reply; when the reply does not change one, copy it from [Current State]. Every other field is incremental: omit it if it did not change. Never re-register existing items, skills, NPCs, relationships or agenda entries.
+3. Never invent information that neither the text nor [Current State] provides. Do not make up a time, outfit or stat just to fill a field; if a scene basic is still unknown, leave that line out. (Affection and relationships are judgments from the story, not invention; see rules 12 and 13.)
+4. Time: in-story time only, never real-world time. If an "Authoritative story clock" line is given, it overrides the time in [Current State]; otherwise start from the time in [Current State]. Advance it only by the time that actually passes in the story (a conversation moves the clock a little; idle dialogue does not change the date). Write calendar dates as year/month/day with slashes, e.g. 2020/01/10 (month/day such as 01/10 if the year is unknown); a fictional calendar keeps its own format. Never write a format placeholder such as YYYY, MM/DD or HH:MM literally: if the date is unknown, write only the time of day (e.g. after school, 20:00) or keep the value from [Current State].
+5. Scene: characters: lists the full current set of present characters; write one costume: line for each of them.
+6. Numeric values (HP/MP/SP bars, level, currency totals) are written as the CURRENT ABSOLUTE value after the change, computed from [Current State]. If unchanged, omit them.
+7. User action: state changes caused by the user's action that the reply confirms (or that the user has clearly carried out) must be recorded too, unless that action is marked as already settled.
+8. Events: write one event: line if this reply contains a story event worth tracing; trivial chit-chat may have no event.
+9. Because the scene basics are always written, always output a <horae> block; output <horaenochange/> only when neither the story nor [Current State] establishes any scene.
+10. Output data tags only: no explanation, no story text, no code fences. Write values in the same language as the story text.
+11. "Assistant" is only the name of the card that wrote this reply. It may be a narrator / GM rather than a person in the story. Do NOT list it in characters:, npc:, affection: or costume: unless it appears in the story text as a character in its own right. Record what each character says, does, wears or owns under THAT character's own name, never under the speaker's name. The "N011"-style numbers in front of NPCs in [Current State] are display IDs, not part of the name: write only the name itself (npc:Alice|…, not npc:N001 Alice｜…), and use the half-width "|" separator.
+12. Affection (affection:, NPC toward User only):
+   - When an NPC first interacts with User, or a present NPC has no affection in [Current State] yet, give a starting value from their current relationship (stranger 0-20 / acquaintance 30-50 / friend 50-70 / lover 70-90).
+   - After that, start from the value in [Current State] and write the new total only when an interaction meaningfully changes their attitude: small steps for everyday interaction, big changes only for major events.
+13. Relationships evolve; they are not re-judged from scratch (applies to npc:'s "@relationship to User" and rel:'s relationship type):
+   - The relationship already in [Current State] is the base; this reply only modifies it. Write the complete relationship after "existing relationship + this change", never a fresh summary of this reply alone.
+   - A lasting bond (lovers, close friends, family, rivals...) is NOT replaced by one mission, one conversation or a temporary role (bodyguard, employer, guide, teammate...). Put temporary roles in the note (npc: ~note:, rel: the note after "|").
+   - npc:'s "@relationship to User" is a SHORT summary only (e.g. "lover", "employer and childhood friend", a few words). The history of the relationship, concrete experiences and recent developments go into that NPC's ~note:. If the relationship in [Current State] is already long, move the details into ~note: in this update and keep only the summary. Never append parenthetical notes or event records to the relationship (e.g. "stranger (warned…, recorded…)"); those always go into ~note:.
+   - A written ~note: replaces the old note entirely (shown as "notes" in the snapshot): keep what still matters from the old note (including non-relationship information), then merge in the new details; skip trivial details.
+   - Upgrade, downgrade or change the relationship type only when the story shows an explicit event (confession, breakup, betrayal, reconciliation, marriage...).
+   - A written value replaces the old one entirely, so always write the complete current relationship; omit the line when neither the relationship nor its note changed.
+   - rel:'s note holds the important RECENT shared experiences of the two. "Recent" means recent in story time by common sense (the last days to weeks), not the last few turns of dialogue: keep the parts of the old note that still matter, merge in new important events, drop what is outdated, and leave out trivial dialogue details.
+
+The "format reference" sections below were originally written for another context. Any wording like "must include at the end of every reply", "required every turn", "missing = fail" does NOT apply here; the core rules above take precedence.
+
+=== Current State (before this reply, read-only) ===
+[Current State Snapshot — recorded automatically from the story so far, for narrative continuity reference]
+
+[Item List] (empty)
+
+=== Preceding user action ===
+(none)
+
+=== Story reply to analyze (speaker: Assistant) ===
+<story>
+If you're connected to an API, try asking me something!
+***
+**Hint:** Set any character as your welcome page assistant from their "More..." menu.
+</story>
+
+=== Output format ===
+<horae>
+time:story date and time (every time; see rule 4)
+location:place (every time; use · for nested places, keep names identical to Current State)
+atmosphere:mood of the scene (only if changed)
+scene_desc:fixed physical features of the location (write only on first arrival or permanent change)
+characters:full names of all present characters, comma separated (every time)
+costume:name=outfit description (every time, one line per present character)
+item:emoji name(qty)|description=holder@exact location (newly obtained, or quantity/holder/location changed)
+item!:... / item!!:... (important / key items, description required)
+item-:item name (consumed, lost, or no longer tracked)
+affection:NPC name=new total (NPC toward User only; only on change, first appearance, or when still missing — rule 12)
+npc:name|appearance=personality@short relationship to User~gender:x~age:x~race:x~job:x~note:relationship details and recent developments (full on first appearance; later only changed fields, but always keep "name|", e.g. npc:name|=@new relationship; relationship per rule 13)
+rel:Character A>Character B=relationship type|note (write only when a relationship is established or changes)
+mood:character name=emotion/mental state (write only when present characters show clear emotional shifts)
+agenda:date|content (new promise/plan/task)
+agenda-:content keyword (completed / invalidated)
+</horae>
+<horaeevent>
+event:level|summary (level: normal/important/critical)
+</horaeevent>
+
+═══ [Scene Memory] Trigger Conditions ═══
+Format: scene_desc:Located at .... Description of this location's fixed physical features (50-150 words)
+Scene memory records a location's core layout and permanent traits (architectural structure, fixed furniture, spatial characteristics) to keep scene descriptions consistent across turns.
+
+[Location/"Located at" Format] ★★★ Strictly follow hierarchy rules ★★★
+  · Start with "Located at" to indicate this place's position relative to its direct parent, then describe this place's own physical features
+  · Child locations (names containing the "·" separator): in "Located at", only write position within the parent building (e.g., which floor, which direction); never include the parent's external geography
+  · Parent/top-level locations: only here should "Located at" include external geography (e.g., which continent, beside which forest)
+  · The system automatically sends parent descriptions to the AI, so child entries do not need and should not repeat parent information
+    ✓ Nameless Tavern·Room 203 → scene_desc:Located on the east side of the 2nd floor. Corner room with good daylight, single wooden bed against the wall, east-facing window
+    ✓ Nameless Tavern·Hall → scene_desc:Located on the 1st floor. High-ceiling wooden space, long bar counter in the center, several round tables scattered around
+    ✓ Nameless Tavern → scene_desc:Located on the northern edge of XX Forest on OO Continent. Two-story wood-and-stone structure, hall and bar on the first floor, guest rooms on the second floor
+    ✗ Nameless Tavern·Room 203 → scene_desc:Located on the 2nd floor of Nameless Tavern by XX Forest in northern OO Continent... (❌ child entries must not include parent external geography)
+    ✗ Nameless Tavern·Hall → scene_desc:Located on the 1st floor of Nameless Tavern by the forest... (❌ same)
+[Place Name Rules]
+  · Use "·" for multi-level locations: Building·Area (e.g., "Nameless Tavern·Hall", "Palace·Dungeon")
+  · The same location must always use exactly the same name as in [Scene|...] above; no abbreviations or rewrites
+  · Same-named areas in different buildings are tracked independently (e.g., "Nameless Tavern·Hall" and "Palace·Hall" are different locations)
+[When to write]
+  ✦ First arrival at a new location → must write scene_desc describing its fixed physical traits
+  ✦ Permanent physical changes at a location (e.g., destroyed, renovated) → write updated scene_desc
+[When not to write]
+  ✗ Return to a previously recorded location with no physical change → do not write
+  ✗ Seasonal/weather/atmosphere changes → do not write (these are temporary and not fixed traits)
+[Description Rules]
+  · Only write fixed/permanent physical traits: spatial structure, building materials, fixed furniture, window orientation, iconic decorations
+  · Do not write temporary states: current lighting, weather, crowds, seasonal decorations, temporarily placed items
+  · Do not copy scene-memory text verbatim into the main body; use it as background reference and rewrite based on current time/weather/light/character perspective
+  · [Scene Memory|...] above contains system-recorded traits for this location; keep these core elements unchanged while freely varying details according to time/season/plot
+
+═══ [Relationship Network] Trigger Conditions ═══
+Format: rel:CharacterA>CharacterB=relationship type|note
+The system automatically records and displays relationship networks between characters, and outputs updates when relationships change.
+
+[When to write] (output only if any condition is met)
+  ✦ A new relationship is established/defined between two characters → rel:CharacterA>CharacterB=relationship type
+  ✦ An existing relationship changes (e.g., from colleagues to friends) → rel:CharacterA>CharacterB=new relationship type
+  ✦ Important relationship details need annotation → add |note
+[When not to write]
+  ✗ Relationship unchanged → do not write
+  ✗ Relationship already recorded and not updated → do not write
+
+[Rules]
+  · CharacterA and CharacterB must both use accurate full names
+  · Use concise words for relationship type: friend, lover, superior-subordinate, master-apprentice, nemesis, partner, etc.
+  · Note field is optional, for special relationship details
+  · Relationships involving User must also be recorded
+  Examples:
+    rel:User>Vol=employment|User runs the tavern, Vol is a regular customer
+    rel:Vol>Eira=crush|Vol has feelings for Eira but has not confessed
+    rel:User>Eira=bestie
+
+═══ [Emotion/Psychological State Tracking] Trigger Conditions ═══
+Format: mood:CharacterName=emotional state (concise phrases, e.g. "tense/anxious", "happy/expectant", "angry", "calm but alert")
+The system tracks emotional changes of characters present to help maintain psychological continuity.
+
+[When to write] (output only if any condition is met)
+  ✦ A character's emotion changes significantly (e.g., from calm to angry) → mood:CharacterName=new emotion
+  ✦ A character appears for the first time with a clear emotional trait → mood:CharacterName=current emotion
+[When not to write]
+  ✗ No emotional change for the character → do not write
+  ✗ Character not present → do not write
+[Rules]
+  · Use 1-4 words for emotion description; use / to separate mixed emotions
+  · Only record emotions of characters currently present
+
+═══ [RPG] ═══
+Write RPG changes inside a <horaerpg> block; omit the block if nothing changed.Owner format follows NPC numbering: N## full name. User uses name directly without N.
+
+[Status Bars — write only when a value changes or is first established by the story]
+When a present character's bar/status changes (or is first established by the text), write its current value:
+  ✅ hp:owner=current/max(HP)  ← must label display name on first use
+  ✅ mp:owner=current/max(MP)  ← must label display name on first use
+  ✅ sp:owner=current/max(SP)  ← must label display name on first use
+  ✅ status:owner=effect1/effect2  ← if no ailments write =normal
+Rules:
+  Registered status bars: hp(HP: 0~9999; default max100; Health; changes through injury, poison, healing and rest), mp(MP: 0~9999; default max100; Mana; changes through casting, mana use, meditation or recovery items), sp(SP: 0~9999; default max100; Stamina; changes through running, dodging, melee bursts, fatigue and rest)
+  - Combat/injury/casting/consumption → reasonable deduction; recovery/rest → reasonable increase
+  - Never invent bar values for characters whose stats the story has not established
+  - If a value did not change, omit it
+
+[Multi-Dimensional Attributes] Write only on first appearance or attribute change; skip if unchanged
+  attr:owner|str=value|dex=value|con=value|int=value|wis=value|cha=value
+  Value range 0-100. Attribute meanings: str(Strength: Physical attack, carrying capacity and melee damage), dex(Dexterity: Reflexes, evasion and ranged accuracy), con(Constitution: Vitality, endurance and poison resistance), int(Intelligence: Knowledge, magic and reasoning ability), wis(Wisdom: Insight, intuition and willpower), cha(Charisma: Persuasion, leadership and personal charm)
+
+[Skills] Write only when learned/upgraded/lost; skip if unchanged
+  skill:owner|skill name|level|effect description
+  skill-:owner|skill name
+
+
+
+
+
+
+
+
+
+[Strongholds] Write when stronghold status changes (upgrade/build/destroy/description update); skip if unchanged. Existing strongholds MUST always use the exact same name as listed in "Current strongholds" below — no abbreviations, rewrites, or prefixed variants of existing names
+Format: base:stronghold path=level or base:stronghold path|desc=description
+Use > to separate hierarchy levels
+Examples:
+  base:Hero's Manor=3
+  base:Hero's Manor>Forge Area>Furnace=2
+  base:Hero's Manor|desc=Stone manor in a river valley with walls and watchtower

@@ -208,6 +208,61 @@ test('scheduler: API exception is recorded as failure', async () => {
     assert.match(h.failures[0].reason, /API/);
 });
 
+test('parse: an opened but unclosed <horae> block is reported as cut off', () => {
+    const r = parse('<horae>\ntime:2020/09/18 20:00\nlocation:便利');
+    assert.equal(r.kind, 'invalid');
+    assert.match(r.reason, /unclosed/);
+});
+
+test('scheduler: an invalid-format reply is retried once with the reason, then succeeds', async () => {
+    const chatRef = { chat: [msg('g'), msg('u', { user: true }), msg('reply')] };
+    setup(chatRef.chat);
+    const h = makeAnalyzer(chatRef);
+    const retries = [];
+    let n = 0;
+    h.analyzer.deps.analyze = (job, retry) => {
+        retries.push(retry || null);
+        return Promise.resolve(n++ === 0 ? '她推开了门。' : '<horae>\nlocation:教会\n</horae>');
+    };
+    h.analyzer.schedule(2);
+    await h.analyzer.waitForIdle(1000);
+    assert.equal(retries.length, 2);
+    assert.equal(retries[0], null);
+    assert.equal(retries[1].retry, 1);
+    assert.match(retries[1].previousError, /no <horae>/);
+    assert.equal(h.failures.length, 0);
+    assert.equal(h.commits.length, 1);
+    assert.ok(!h.states.includes('failed'));
+});
+
+test('scheduler: gives up after the retry budget and marks the message failed', async () => {
+    const chatRef = { chat: [msg('g'), msg('u', { user: true }), msg('reply')] };
+    const h = makeAnalyzer(chatRef);
+    let calls = 0;
+    h.analyzer.deps.analyze = () => { calls++; return Promise.resolve('<horae>\nlocation:被截'); };
+    h.analyzer.schedule(2);
+    await h.analyzer.waitForIdle(1000);
+    assert.equal(calls, 2);
+    assert.equal(h.failures.length, 1);
+    assert.match(h.failures[0].reason, /unclosed/);
+});
+
+test('scheduler: a reply that turns stale during the retry is discarded', async () => {
+    const chatRef = { chat: [msg('g'), msg('u', { user: true }), msg('reply')] };
+    const h = makeAnalyzer(chatRef);
+    let calls = 0;
+    h.analyzer.deps.analyze = () => {
+        calls++;
+        if (calls === 2) chatRef.chat[2].mes = 'edited reply';
+        return Promise.resolve(calls === 1 ? 'nope' : '<horae>\nlocation:教会\n</horae>');
+    };
+    h.analyzer.schedule(2);
+    await h.analyzer.waitForIdle(1000);
+    assert.equal(h.commits.length, 0);
+    assert.equal(h.failures.length, 0);
+    assert.ok(h.states.includes('stale'));
+});
+
 test('scheduler: waitForIdle times out instead of deadlocking', async () => {
     const chatRef = { chat: [msg('g'), msg('u', { user: true }), msg('reply')] };
     const h = makeAnalyzer(chatRef, { manual: true });

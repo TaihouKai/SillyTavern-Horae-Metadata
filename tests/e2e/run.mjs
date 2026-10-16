@@ -201,8 +201,19 @@ try {
     rpg = await rpgData(page);
     check(results, 'S9 retry via badge succeeds and applies damage', rpg?.bars?.[U]?.hp?.[0] === 54, JSON.stringify(rpg?.bars?.[U]));
 
-    // 格式错误
-    await mock('/control', { mainQueue: ['你喘了口气，靠在墙边。'], auxMalformedNext: 1, clearLogs: true });
+    // 格式错误：一次偶发错误由自动重试恢复，重试请求带上失败原因
+    await mock('/control', { mainQueue: ['你揉了揉肩膀。'], auxMalformedNext: 1, clearLogs: true });
+    await sendUser(page, '我活动一下肩膀。');
+    idx = (await chatSnapshot(page)).length - 1;
+    await waitBg(page, idx);
+    snap = await chatSnapshot(page);
+    let auxLogs = (await mock('/logs')).filter(l => l.type === 'aux');
+    const retryPrompt = auxLogs[1]?.messages?.map(m => m.content).join('\n') || '';
+    check(results, 'S9 one malformed aux response is retried automatically', snap[idx].bg.status !== 'failed' && auxLogs.length === 2, `status=${snap[idx].bg.status}, aux=${auxLogs.length}`);
+    check(results, 'S9 retry prompt says why the first reply was rejected', /【重试】|\[Retry\]/.test(retryPrompt));
+
+    // 连续两次格式错误：失败（不做宽松解析）
+    await mock('/control', { mainQueue: ['你喘了口气，靠在墙边。'], auxMalformedNext: 2, clearLogs: true });
     await sendUser(page, '我休息一下。');
     idx = (await chatSnapshot(page)).length - 1;
     await waitBg(page, idx, ['failed']);
