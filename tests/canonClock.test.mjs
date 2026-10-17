@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { horaeManager, bg, msg, setup, parse, commit } from './helpers.mjs';
-import { readCanonClock, formatCanonClockLine, stripTimePlaceholders, sameStoryDate } from '../utils/timeUtils.js';
+import { readCanonClock, formatCanonClockLine, stripTimePlaceholders, sameStoryDate, sameStoryTime } from '../utils/timeUtils.js';
 
 const CLOCK = { active: true, packId: 'p', date: '2020/09/18', time: '20:00', tick: 88860, tickHi: 88860, day: 61, minute: 1200, weekday: 5, label: '2020-09-18 20:00 (D61)' };
 
@@ -85,4 +85,12 @@ test('prompts: authoritative clock overrides [Current State]; placeholders forbi
     assert.match(bg.DEFAULT_BG_PROMPT_EN, /Never write a format placeholder such as YYYY, MM\/DD or HH:MM literally/);
     assert.match(bg.DEFAULT_BG_PROMPT_ZH, /若给出了「权威故事时钟」行，以它为准/);
     assert.match(bg.DEFAULT_BG_PROMPT_ZH, /绝不能照抄 YYYY、MM\/DD、HH:MM 之类的格式占位符/);
+});
+
+test('sameStoryTime: same day but drifted time is a mismatch (follow Canon), small differences are tolerated', () => {
+    assert.ok(!sameStoryTime('15:30', '13:00'), '2.5 h drift within the same day');
+    assert.ok(sameStoryTime('13:05', '13:00'), 'within tolerance');
+    assert.ok(!sameStoryTime('午后', '13:00'), 'vague label vs exact Canon time');
+    assert.ok(!sameStoryTime('', '13:00'), 'missing time');
+    assert.ok(sameStoryTime('午后', ''), 'Canon has no time');
 });

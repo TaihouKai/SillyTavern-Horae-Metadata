@@ -4,6 +4,12 @@
 
 ---
 
+## Fork: 跟随 Canon Engine 时钟时也同步同一天内的时间
+
+- 以前「跟随 Canon Engine 时钟」只在日期不同时才同步，同一天内的时间偏差（例如 Canon 13:00、Horae 15:30）会一直累积。现在日期相同但时间相差超过 10 分钟，或 Horae 只有模糊说法（"午后"）/没有时间而 Canon 有精确时间时，也会把 Horae 的当前时间改成 Canon 的时间。仍然只修改 Horae 自己的数据，用户刚编辑过时间（10 秒内）时不覆盖。
+
+---
+
 ## Fork: 后台分析在支持的 Venice 模型上以 JSON 回复
 
 - 新设置「后台分析以 JSON 回复（支持的 Venice 模型）」（默认开启）：辅助 API 为 Venice、且该模型在 Venice 模型列表中声明 `supportsResponseSchema` 时，后台分析请求附带 JSON schema（`response_format`，strict），由接口强制回复结构，分析器不再可能漏写 `<horae>` 标签。字段为 `horae` / `event` / `rpg` / `tables`（每个块里原本的行，不含标签）以及不被读取的 `notes`。

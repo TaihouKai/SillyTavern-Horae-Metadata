@@ -802,6 +802,19 @@ export function extractLeadingDate(str) {
     return m ? m[1] : '';
 }
 
+/**
+ * 同一天内 Horae 的时间是否与 Canon 的时钟一致：两者都能读出 HH:MM 时，相差不超过 toleranceMin 分钟即一致；
+ * Horae 只有模糊说法（"午后"）或没有时间而 Canon 有精确时间时视为不一致（以 Canon 为准）；Canon 没有时间时视为一致。
+ */
+export function sameStoryTime(horaeTime, canonTime, toleranceMin = 10) {
+    const hm = (s) => { const m = String(s ?? '').match(/(\d{1,2})[:：](\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+    const c = hm(canonTime);
+    if (c === null) return true;
+    const h = hm(horaeTime);
+    if (h === null) return false;
+    return Math.abs(h - c) <= toleranceMin;
+}
+
 /** 两个剧情日期是否为同一天（按 年/月/日 比较；无法解析时按原文比较） */
 export function sameStoryDate(a, b) {
     const pa = parseStoryDate(extractLeadingDate(a) || String(a ?? ''));

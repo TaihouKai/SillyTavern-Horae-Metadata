@@ -169,7 +169,7 @@
         "autoFillPrevTimelineOnSendHint": "发送前若上一条 AI 回复缺少 <horae>/<horaeevent>，会使用该楼层之前的轻量状态、角色身份和上一条用户行动作为参考，对该楼层进行完整 AI 分析并写回历史。此功能会调用 AI，默认关闭。",
         "injectContext": "自动注入状态上下文",
         "followCanonClock": "跟随 Canon Engine 故事时钟",
-        "followCanonClockHint": "安装并在当前聊天启用 Canon Engine 时：后台分析以它的故事时钟为时间基准，Horae 的当前日期也会跟随它（只修改 Horae 自己的数据）。未安装或未启用时无任何影响。",
+        "followCanonClockHint": "安装并在当前聊天启用 Canon Engine 时：后台分析以它的故事时钟为时间基准，Horae 的当前日期和时间也会跟随它（只修改 Horae 自己的数据）。未安装或未启用时无任何影响。",
         "lorebookScanState": "世界书关键词匹配剧情时间/地点",
         "lorebookScanStateHint": "让世界书条目的关键词能匹配 Horae 当前的剧情日期、时间和地点（例如关键词 2020/01 会在剧情时间为 2020/01/10 时触发）。这些内容只参与世界书扫描，不会额外发送给模型。",
         "useMainPresetForAiTasks": "后台 AI 任务使用酒馆主预设",
