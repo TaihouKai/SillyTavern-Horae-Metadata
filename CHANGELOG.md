@@ -6,7 +6,7 @@
 
 ## Fork: 跟随 Canon Engine 时钟只在 Canon 领先时生效
 
-- 「跟随 Canon Engine 时钟」现在只在 Canon 的时间比 Horae 晚时不会生效、比 Horae 早时也不会把 Horae 拉回：只有 Canon 领先超过 10 分钟（例如原作事件的时间跳跃）或 Horae 没有日期时，才把 Horae 的当前日期和时间改成 Canon 的。Horae 每回合推算时间，通常更连续；Canon Engine 1.3.38 起反过来以 Horae 的时间作为每个新回合的起点。无法比较（非公历日期）时沿用旧规则。
+- 「跟随 Canon Engine 时钟」不再把 Horae 的时间拉回到较慢的 Canon 时钟：只有 Canon 领先超过 10 分钟（例如原作事件的时间跳跃）或 Horae 没有日期时，才把 Horae 的当前日期和时间改成 Canon 的。Horae 每回合推算时间，通常更连续；Canon Engine 1.3.38 起反过来以 Horae 的时间作为每个新回合的起点。无法比较（非公历日期）时沿用旧规则。
 
 ---
 
