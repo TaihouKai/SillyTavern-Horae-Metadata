@@ -16,7 +16,7 @@ import * as stPowerUserModule from '/scripts/power-user.js';
 import { horaeManager, createEmptyMeta, getItemBaseName } from './core/horaeManager.js';
 import { vectorManager } from './core/vectorManager.js';
 import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH, BG_JSON_RESPONSE_FORMAT, buildJsonEnvelopeNotice } from './core/bgAnalysis.js';
-import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText, readCanonClock, formatCanonClockLine, sameStoryDate, sameStoryTime } from './utils/timeUtils.js';
+import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText, readCanonClock, formatCanonClockLine, sameStoryDate, sameStoryTime, canonLeadMinutes } from './utils/timeUtils.js';
 import { PB_META_KEY } from './core/personaBootstrap.js';
 import { createPersonaController } from './core/personaController.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
@@ -20729,7 +20729,7 @@ function _canonClockLineFor(chat, idx, zh) {
 }
 
 /**
- * 跟随 Canon Engine 时钟：Horae 当前日期/时间缺失或与 Canon 不同时，把 Canon 的日期/时间写入最新一条回复的 Horae 元数据。
+ * 跟随 Canon Engine 时钟：Horae 当前日期缺失或比 Canon 落后时，把 Canon 的日期/时间写入最新一条回复的 Horae 元数据。
  * 只改 Horae 自己的数据；用户刚编辑过时间时不覆盖。返回是否写入。
  */
 function _syncCanonClock(clk, { save = true } = {}) {
@@ -20740,8 +20740,10 @@ function _syncCanonClock(clk, { save = true } = {}) {
     const i = _lastStoryMessageIndex(chat);
     if (i < 0) return false;
     const cur = horaeManager.getLatestState()?.timestamp || {};
-    // 日期和时间都与 Canon 一致才跳过（以前只比较日期，同一天内的时间偏差会一直累积）
-    if (cur.story_date && sameStoryDate(cur.story_date, clk.date) && sameStoryTime(cur.story_time, clk.time)) return false;
+    // 只在 Canon 领先时跟随（例如原作事件的时间跳跃）：Horae 逐回合估算时间，通常更连续，不把它拉回较慢的 Canon 时钟。
+    // 无法比较（非公历日期等）时退回旧规则：日期相同即不改。
+    const lead = cur.story_date ? canonLeadMinutes(cur.story_date, cur.story_time, clk.date, clk.time) : null;
+    if (cur.story_date && (lead !== null ? lead <= 10 : sameStoryDate(cur.story_date, clk.date))) return false;
     const message = chat[i];
     if (!message.horae_meta) message.horae_meta = createEmptyMeta();
     if (!message.horae_meta.timestamp) message.horae_meta.timestamp = { story_date: '', story_time: '', absolute: '' };

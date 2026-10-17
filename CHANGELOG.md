@@ -4,9 +4,9 @@
 
 ---
 
-## Fork: 跟随 Canon Engine 时钟时也同步同一天内的时间
+## Fork: 跟随 Canon Engine 时钟只在 Canon 领先时生效
 
-- 以前「跟随 Canon Engine 时钟」只在日期不同时才同步，同一天内的时间偏差（例如 Canon 13:00、Horae 15:30）会一直累积。现在日期相同但时间相差超过 10 分钟，或 Horae 只有模糊说法（"午后"）/没有时间而 Canon 有精确时间时，也会把 Horae 的当前时间改成 Canon 的时间。仍然只修改 Horae 自己的数据，用户刚编辑过时间（10 秒内）时不覆盖。
+- 「跟随 Canon Engine 时钟」现在只在 Canon 的时间比 Horae 晚时不会生效、比 Horae 早时也不会把 Horae 拉回：只有 Canon 领先超过 10 分钟（例如原作事件的时间跳跃）或 Horae 没有日期时，才把 Horae 的当前日期和时间改成 Canon 的。Horae 每回合推算时间，通常更连续；Canon Engine 1.3.38 起反过来以 Horae 的时间作为每个新回合的起点。无法比较（非公历日期）时沿用旧规则。
 
 ---
 

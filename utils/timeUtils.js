@@ -815,6 +815,18 @@ export function sameStoryTime(horaeTime, canonTime, toleranceMin = 10) {
     return Math.abs(h - c) <= toleranceMin;
 }
 
+/**
+ * Horae 的时间比 Canon 时钟晚（落后）多少分钟：正数 = Canon 领先。日期都能解析为公历时按 日期+HH:MM 计算；
+ * Horae 没有可读的 HH:MM 时按当天 00:00；无法比较时返回 null。
+ */
+export function canonLeadMinutes(horaeDate, horaeTime, canonDate, canonTime) {
+    const hm = (s) => { const m = String(s ?? '').match(/(\d{1,2})[:：](\d{2})/); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+    const day = (s) => { const p = parseStoryDate(extractLeadingDate(s) || String(s ?? '')); return p?.type === 'standard' && p.month && p.day ? Date.UTC(p.year ?? 2000, p.month - 1, p.day) / 86400000 : null; };
+    const hd = day(horaeDate), cd = day(canonDate), ct = hm(canonTime);
+    if (hd === null || cd === null || ct === null) return null;
+    return (cd * 1440 + ct) - (hd * 1440 + (hm(horaeTime) ?? 0));
+}
+
 /** 两个剧情日期是否为同一天（按 年/月/日 比较；无法解析时按原文比较） */
 export function sameStoryDate(a, b) {
     const pa = parseStoryDate(extractLeadingDate(a) || String(a ?? ''));

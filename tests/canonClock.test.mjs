@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { horaeManager, bg, msg, setup, parse, commit } from './helpers.mjs';
-import { readCanonClock, formatCanonClockLine, stripTimePlaceholders, sameStoryDate, sameStoryTime } from '../utils/timeUtils.js';
+import { readCanonClock, formatCanonClockLine, stripTimePlaceholders, sameStoryDate, sameStoryTime, canonLeadMinutes } from '../utils/timeUtils.js';
 
 const CLOCK = { active: true, packId: 'p', date: '2020/09/18', time: '20:00', tick: 88860, tickHi: 88860, day: 61, minute: 1200, weekday: 5, label: '2020-09-18 20:00 (D61)' };
 
@@ -93,4 +93,11 @@ test('sameStoryTime: same day but drifted time is a mismatch (follow Canon), sma
     assert.ok(!sameStoryTime('午后', '13:00'), 'vague label vs exact Canon time');
     assert.ok(!sameStoryTime('', '13:00'), 'missing time');
     assert.ok(sameStoryTime('午后', ''), 'Canon has no time');
+});
+
+test('canonLeadMinutes: Horae follows Canon only when Canon is ahead', () => {
+    assert.equal(canonLeadMinutes('2020/09/19', '15:30', '2020/09/19', '13:00'), -150, 'Horae ahead: no follow');
+    assert.equal(canonLeadMinutes('2020/09/19', '13:00', '2020/09/20', '08:00'), 1140, 'Canon a day ahead');
+    assert.equal(canonLeadMinutes('2020/09/19', '午后', '2020/09/19', '13:00'), 780, 'vague Horae time counts as 00:00');
+    assert.equal(canonLeadMinutes('第三纪元某日', '13:00', '2020/09/19', '13:00'), null, 'not comparable');
 });
