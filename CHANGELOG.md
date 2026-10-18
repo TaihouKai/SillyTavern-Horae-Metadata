@@ -10,6 +10,12 @@
 
 ---
 
+## Fork: 只有状态、没有属性条的角色，状态也会发送给主模型
+
+- 修复（上游既有问题）：RPG 状态（如 `status:主角=流血/虚弱`）只有在至少一个角色有属性条（HP/MP 等）时才会写进发送给主模型的【RPG状态】；还没有任何属性条时，状态虽已记录、HUD 上也能看到，但主模型看不到。现在只有状态的角色同样会发送。
+
+---
+
 ## Fork: 后台分析在支持的 Venice 模型上以 JSON 回复
 
 - 新设置「后台分析以 JSON 回复（支持的 Venice 模型）」（默认开启）：辅助 API 为 Venice、且该模型在 Venice 模型列表中声明 `supportsResponseSchema` 时，后台分析请求附带 JSON schema（`response_format`，strict），由接口强制回复结构，分析器不再可能漏写 `<horae>` 标签。字段为 `horae` / `event` / `rpg` / `tables`（每个块里原本的行，不含标签）以及不被读取的 `notes`。

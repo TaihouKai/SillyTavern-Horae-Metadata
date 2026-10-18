@@ -1045,7 +1045,9 @@ class HoraeManager {
                 return npc?._id ? `N${npc._id} ${name}: ` : `${name}: `;
             };
 
-            if (sendBars && Object.keys(rpg.bars).length > 0) {
+            // 只有状态、还没有属性条的角色（如只写了 status:X=流血）也要发送
+            const hasStatusOnly = Object.entries(rpg.status || {}).some(([n, e]) => e?.length > 0 && !rpg.bars[n]);
+            if (sendBars && (Object.keys(rpg.bars).length > 0 || hasStatusOnly)) {
                 lines.push(`\n[${L('RPG状态','RPG Status','RPGステータス','RPG 상태','RPG-статус')}]`);
                 for (const [name, bars] of Object.entries(rpg.bars)) {
                     if (_cUoB && name !== userName) continue;
