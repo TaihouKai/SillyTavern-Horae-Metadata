@@ -18,7 +18,7 @@ import { vectorManager } from './core/vectorManager.js';
 import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH, BG_JSON_RESPONSE_FORMAT, buildJsonEnvelopeNotice } from './core/bgAnalysis.js';
 import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText, readCanonClock, formatCanonClockLine, sameStoryDate, sameStoryTime, canonLeadMinutes } from './utils/timeUtils.js';
 import { PB_META_KEY } from './core/personaBootstrap.js';
-import { parsePresetCharacters, recordManualNpcFields, renameManualNpc } from './core/presetCharacters.js';
+import { parsePresetCharacters } from './core/presetCharacters.js';
 import { createPersonaController } from './core/personaController.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
 import { initPromptDefaults, ensurePromptDefaults, ensurePresetPrompts, getPromptDefaultSync, getPresetPromptsSync, BUILTIN_PRESET_IDS } from './core/promptDefaults.js';
@@ -222,7 +222,7 @@ const DEFAULT_SETTINGS = {
         monthNames: [],
         monthDays: [],
     },
-    // 预设角色：每行一个 npc 格式档案，按名字/别名替换 AI 写的角色档案（预设没写的字段只用手动值）（只改显示与发送的聚合状态）
+    // 预设角色：每行一个 npc 格式档案，按名字/别名覆盖 AI 写的角色档案中预设写了的字段（只改显示与发送的聚合状态）
     presetCharacters: {
         enabled: true,
         text: '',
@@ -5224,7 +5224,6 @@ function openNpcAddModal() {
         if (!chat[0].horae_meta._userAddedNpcs.includes(newName)) {
             chat[0].horae_meta._userAddedNpcs.push(newName);
         }
-        recordManualNpcFields(chat, newName, newData, settings.presetCharacters, (str) => horaeManager._parseNpcFields(str), aliases);
 
         // 同步从 _deletedNpcs 移除（防止用户先删后加被立刻吞回）
         const delList = chat[0].horae_meta._deletedNpcs;
@@ -5574,10 +5573,6 @@ function openNpcEditModal(npcName) {
 
         // 处理重要角色标记
         const finalName = isRename ? newName : npcName;
-
-        // 手动填写的字段另存一份，预设角色没写的字段用它（见 core/presetCharacters.js）
-        if (isRename) renameManualNpc(chat, npcName, newName);
-        recordManualNpcFields(chat, finalName, newData, settings.presetCharacters, (str) => horaeManager._parseNpcFields(str), newData._aliases || npc._aliases);
         const newPinned = document.getElementById('edit-npc-pinned').checked;
         if (!settings.pinnedNpcs) settings.pinnedNpcs = [];
         const pinIdx = settings.pinnedNpcs.indexOf(finalName);
@@ -9995,7 +9990,7 @@ function refreshAllDisplays() {
 const _GLOBAL_META_KEYS = [
     'autoSummaries', '_deletedNpcs', '_deletedAgendaTexts',
     'locationMemory', 'relationships', 'rpg',
-    '_rpgConfigs', '_pendingScanReview', '_userAddedNpcs', '_npcManual',
+    '_rpgConfigs', '_pendingScanReview', '_userAddedNpcs',
 ];
 
 function _saveGlobalMeta(meta) {

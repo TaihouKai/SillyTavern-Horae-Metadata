@@ -512,7 +512,7 @@ class HoraeManager {
         if (end > 0) _applySteps(end - 1);
 
         // 预设角色：只覆盖聚合结果，不改楼层数据（见 presetCharacters.js）
-        applyPresetCharacters(state.npcs, this.settings?.presetCharacters, (str) => this._parseNpcFields(str), chat[0]?.horae_meta?._npcManual);
+        applyPresetCharacters(state.npcs, this.settings?.presetCharacters, (str) => this._parseNpcFields(str));
 
         // 过滤用户已删除的NPC（防回滚）
         const deletedNpcs = chat[0]?.horae_meta?._deletedNpcs;

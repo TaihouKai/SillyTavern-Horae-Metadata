@@ -225,7 +225,7 @@
         "customCalendarSuggestGo": "Configure",
         "customCalendarSuggestDismiss": "Not Now",
         "presetCharacters": "Preset Characters",
-        "presetCharactersHint": "Shared by all chats. When a character the AI recorded has the same name (or former name) as a name or alias here, this profile is used instead: fields written here always win; fields left out never take the AI's value, only a value you entered yourself in the character panel (otherwise empty). One character per line, same format as an npc: line. Only what is shown and sent to the AI changes; the records saved in the chat stay as they are, so turning this off restores them.",
+        "presetCharactersHint": "Shared by all chats. When a character the AI recorded has the same name (or former name) as a name or alias here, the fields written here replace the AI's; fields you leave out (e.g. note, @relationship) are recorded by Horae as usual. One character per line, same format as an npc: line. Only what is shown and sent to the AI changes; the records saved in the chat stay as they are, so turning this off restores them.",
         "presetCharactersEnable": "Enable preset characters",
         "presetCharactersPlaceholder": "Shokuhou Misaki|long blonde hair, star-shaped pupils=scheming, playful~gender:female~age:14~job:Tokiwadai student, Level 5 esper~aliases:Shokuhou/Queen",
         "presetCharactersApply": "Apply",
