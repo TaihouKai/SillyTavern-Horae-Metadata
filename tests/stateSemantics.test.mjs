@@ -568,3 +568,30 @@ test('long relationships keep only the summary; the record moves into 备注', (
     commit(chat, idx3, parse('<horae>\nnpc:研究员|=@恋人（前任）\n</horae>'));
     assert.equal(horaeManager.getLatestState().npcs['研究员'].relationship, '恋人（前任）');
 });
+
+test('RPG status: "normal"-type words clear it, also when mixed into a list', () => {
+    const chat = baseChat();
+    let i = push(chat, '我们打一架。', '你被划伤了。');
+    commit(chat, i, parse(`<horae>\nlocation:冬木市·教会\n</horae>\n<horaerpg>\nstatus:${U}=流血/虚弱\n</horaerpg>`));
+    rebuildAll();
+    assert.deepEqual(horaeManager.getRpgData().status?.[U], ['流血', '虚弱']);
+    i = push(chat, '包扎。', '血止住了，头发还湿着。');
+    commit(chat, i, parse(`<horae>\nlocation:冬木市·教会\n</horae>\n<horaerpg>\nstatus:${U}=湿发/正常\n</horaerpg>`));
+    rebuildAll();
+    assert.deepEqual(horaeManager.getRpgData().status?.[U], ['湿发']);
+    i = push(chat, '休息。', '头发干了。');
+    commit(chat, i, parse(`<horae>\nlocation:冬木市·教会\n</horae>\n<horaerpg>\nstatus:${U}=clean\n</horaerpg>`));
+    rebuildAll();
+    assert.deepEqual(horaeManager.getRpgData().status?.[U] || [], []);
+});
+
+test('analyzer RPG instructions say statuses persist until cleared (zh and en)', () => {
+    setup([msg('开场')]);
+    const zh = horaeManager.generateBgModulePrompts();
+    assert.match(zh, /状态会一直保留，直到写出新的 status 行/);
+    setup([msg('opening')], { aiOutputLanguage: 'en' });
+    const en = horaeManager.generateBgModulePrompts();
+    assert.match(en, /Statuses in \[Current State\] stay until you write a new status line/);
+    // 主模型的 RPG 提示词不变
+    assert.doesNotMatch(horaeManager.generateRpgPrompt(), /stay until you write a new status line/);
+});

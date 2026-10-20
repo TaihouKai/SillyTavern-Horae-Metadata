@@ -17880,6 +17880,9 @@ async function generateWithDirectApi(prompt, profile = null, opts = {}) {
     // Venice：不附带 Venice 自带的系统提示词（会干扰结构化输出），正文中不保留 <think> 块
     const isVenice = /^https?:\/\/([^/]*\.)?venice\.ai(?=[/:]|$)/i.test(url);
     if (isVenice) body.venice_parameters = { include_venice_system_prompt: false, strip_thinking_response: true };
+    // 后台分析是抽取任务：推理模型（如 qwen-3-8-27b 默认 xhigh）常把 4096 输出额度全花在思考上、正文为空，
+    // 以前要白白多发一次请求才关掉思考重试；分析直接关闭思考
+    if (isVenice && kind === 'analysis') body.venice_parameters.disable_thinking = true;
     console.log(`[Horae] 独立API请求: ${url}, 模型: ${body.model}`);
     // 可选超时：后台分析需要可中断，避免挂起的请求长期占住辅助 API 串行队列；重试共用同一截止时间
     const deadline = opts.timeoutMs > 0 ? Date.now() + opts.timeoutMs : 0;

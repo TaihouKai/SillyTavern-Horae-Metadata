@@ -49,6 +49,16 @@ import { applyPresetCharacters } from './presetCharacters.js';
  */
 
 /** 创建空的元数据对象 */
+// 后台分析器：状态不会自己消失，剧情里结束了也要写出来（否则「流血」会一直挂着）
+const BG_STATUS_PERSIST_ZH = '  - 【当前状态】里的状态会一直保留，直到写出新的 status 行：本回合剧情表明某个状态已结束（如止血、伤口处理好、药效消退）时，写出仍存在的状态，全部结束就写 正常；经过休息或较长时间后，属性条也要相应回增\n';
+const BG_STATUS_PERSIST_EN = '  - Statuses in [Current State] stay until you write a new status line: when this reply shows an effect has ended (bleeding stopped, wound treated, a drug wore off...), write the effects that remain, or normal if none remain; after rest or a good amount of time, raise the bars accordingly\n';
+
+// 「正常」类词表示无异常；混在列表里（如「湿发/正常」）时只去掉它，不当作状态
+const RPG_STATUS_CLEAR_RE = /^(正常|无|無|无异常|無異常|none|normal|clear|clean|ok|healthy)$/i;
+export function splitRpgStatus(text) {
+    return String(text || '').split('/').map(s => s.trim()).filter(s => s && !RPG_STATUS_CLEAR_RE.test(s));
+}
+
 export function createEmptyMeta() {
     return {
         timestamp: {
@@ -1982,13 +1992,11 @@ class HoraeManager {
             const str = line.substring(7).trim();
             const eq = str.indexOf('=');
             if (_uoB && eq < 0) {
-                rpg.status[_uoName] = (!str || /^(正常|无|無|none|normal|clear)$/i.test(str))
-                    ? [] : str.split('/').map(s => s.trim()).filter(Boolean);
+                rpg.status[_uoName] = splitRpgStatus(str);
             } else if (eq > 0) {
                 const owner = _uoB ? _uoName : str.substring(0, eq).trim();
                 const val = str.substring(eq + 1).trim();
-                rpg.status[owner] = (!val || /^(正常|无|無|none|normal|clear)$/i.test(val))
-                    ? [] : val.split('/').map(s => s.trim()).filter(Boolean);
+                rpg.status[owner] = splitRpgStatus(val);
             }
             return;
         }
@@ -3857,8 +3865,8 @@ class HoraeManager {
             ['  - 登場中の各キャラクターのすべてのステータスバーを書く必要があります；誰か一人でも漏れ＝不合格\n', '  - 物語で確定していないキャラクターの数値を捏造しない\n'],
             ['  - 등장 중인 모든 캐릭터의 모든 스테이터스 바를 작성해야 합니다; 누구 하나라도 누락 = 불합격\n', '  - 스토리에서 확정되지 않은 캐릭터의 수치를 지어내지 말 것\n'],
             ['  - Каждая шкала каждого присутствующего персонажа ДОЛЖНА быть записана; пропуск кого-либо = провал\n', '  - Не выдумывайте значения шкал для персонажей, чьи показатели не установлены сюжетом\n'],
-            ['  - 即使本回合数值无变化，也必须写出当前值\n', '  - 数值无变化则不写\n'],
-            ['  - Even if values didn\'t change this turn, MUST still write current values\n', '  - If a value did not change, omit it\n'],
+            ['  - 即使本回合数值无变化，也必须写出当前值\n', '  - 数值无变化则不写\n' + BG_STATUS_PERSIST_ZH],
+            ['  - Even if values didn\'t change this turn, MUST still write current values\n', '  - If a value did not change, omit it\n' + BG_STATUS_PERSIST_EN],
             ['  - 今回のターンで数値に変化がなくても、現在の値を必ず記載すること\n', '  - 数値に変化がなければ省略\n'],
             ['  - 이번 턴에 수치 변화가 없더라도 현재 값을 반드시 기재할 것\n', '  - 수치 변화가 없으면 생략\n'],
             ['  - Даже если значения не изменились в этом ходу, НЕОБХОДИМО записать текущие значения\n', '  - Если значение не изменилось, не записывайте его\n'],
