@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { horaeManager, msg, setup, parse, commit } from './helpers.mjs';
-import { parsePresetCharacters } from '../core/presetCharacters.js';
+import { parsePresetCharacters, recordManualNpcFields, renameManualNpc } from '../core/presetCharacters.js';
 
 const PRESET = [
     '# 注释行会被忽略',
@@ -72,4 +72,31 @@ test('preset: disabled or unmatched leaves the AI profile untouched', () => {
 test('preset: does not create characters the AI has not recorded', () => {
     chatWithMisaki();
     assert.equal(horaeManager.getLatestState().npcs['御坂美琴'], undefined);
+});
+
+test('preset: a field the preset leaves out keeps a manually entered value, never the AI one', () => {
+    const chat = chatWithMisaki();
+    const parseFn = (s) => horaeManager._parseNpcFields(s);
+    chat[0].horae_meta ??= {};
+    // 面板编辑保存：回显的预设值 + 手动填的关系/补充
+    recordManualNpcFields(chat, '食蜂操祈', { appearance: '金色长发，星形瞳孔', personality: '傲娇腹黑', relationship: '同班同学', note: '欠我一个人情', race: '' }, horaeManager.settings.presetCharacters, parseFn);
+    assert.deepEqual(chat[0].horae_meta._npcManual['食蜂操祈'], { relationship: '同班同学', note: '欠我一个人情' }, 'preset echo is not recorded');
+    let npc = horaeManager.getLatestState().npcs['食蜂操祈'];
+    assert.equal(npc.relationship, '同班同学');
+    assert.equal(npc.note, '欠我一个人情');
+    assert.equal(npc.race, '', 'AI value (人类) still not used');
+    // AI 之后再写关系，不影响手动值
+    chat.push(msg('继续。', { user: true }), msg('她笑了。'));
+    commit(chat, 4, parse('<horae>\nnpc:食蜂操祈|金发少女=阴险@盟友\n</horae>'));
+    assert.equal(horaeManager.getLatestState().npcs['食蜂操祈'].relationship, '同班同学');
+    // 手动改了预设字段：预设仍然优先
+    recordManualNpcFields(chat, '食蜂操祈', { personality: '温柔' }, horaeManager.settings.presetCharacters, parseFn);
+    assert.equal(horaeManager.getLatestState().npcs['食蜂操祈'].personality, '傲娇腹黑');
+    // 清空手动值 → 回到空
+    recordManualNpcFields(chat, '食蜂操祈', { note: '' }, horaeManager.settings.presetCharacters, parseFn);
+    assert.equal(horaeManager.getLatestState().npcs['食蜂操祈'].note, '');
+    // 改名迁移
+    renameManualNpc(chat, '食蜂操祈', '女王');
+    assert.equal(chat[0].horae_meta._npcManual['女王'].relationship, '同班同学');
+    assert.equal(chat[0].horae_meta._npcManual['食蜂操祈'], undefined);
 });

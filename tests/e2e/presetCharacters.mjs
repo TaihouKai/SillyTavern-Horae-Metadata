@@ -50,6 +50,26 @@ try {
     const mainText = (main?.messages || []).map(m => m.content).join('\n');
     check('next turn: main model context has the preset profile', mainText.includes('金色长发，星形瞳孔') && !mainText.includes('金发少女=温柔') && !mainText.includes('@刚认识的同学'));
 
+    // 角色面板手动填写预设没写的字段：保留手动值；预设写了的字段仍以预设为准
+    const edited = await page.evaluate(async () => {
+        document.querySelector('.horae-item-edit-btn[data-edit-type="npc"][data-edit-name="食蜂操祈"]').click();
+        await new Promise(r => setTimeout(r, 500));
+        document.getElementById('edit-npc-relationship').value = '同班同学';
+        document.getElementById('edit-npc-personality').value = '温柔';
+        document.getElementById('edit-modal-save').click();
+        await new Promise(r => setTimeout(r, 1500));
+        const c = SillyTavern.getContext().chat;
+        return { npc: window.Horae.getLatestState().npcs?.['食蜂操祈'], manual: c[0].horae_meta?._npcManual?.['食蜂操祈'] };
+    });
+    check('manual value fills a field the preset leaves out', edited.npc?.relationship === '同班同学', JSON.stringify(edited));
+    check('preset field still wins over a manual edit', edited.npc?.personality === '傲娇腹黑');
+    check('fields left empty stay empty (AI race/age not used)', edited.npc?.race === '' && edited.npc?.birthday === '');
+    await mock('/control', { auxRules: [{ match: '她换了座位', response: '<horae>\nnpc:食蜂操祈|金发少女=阴险@盟友~种族:人类\n</horae>' }], mainQueue: ['她换了座位。'], clearLogs: true });
+    await sendUser(page, '上课了。');
+    await waitIdle(page, 30000);
+    const after = await page.evaluate(() => window.Horae.getLatestState().npcs?.['食蜂操祈']);
+    check('a later AI update changes nothing', after?.relationship === '同班同学' && after?.personality === '傲娇腹黑' && after?.race === '', JSON.stringify(after));
+
     // 关闭后恢复 AI 档案
     const off = await page.evaluate(() => {
         $('#horae-setting-preset-chars-enabled').prop('checked', false);
