@@ -949,6 +949,29 @@
                 </div>
 
                 <div class="horae-settings-section">
+                    <div class="horae-section-header horae-collapse-header" id="horae-preset-chars-collapse-toggle" data-i18n="settings.presetCharacters">
+                        <i class="fa-solid fa-user-pen"></i>
+                        预设角色
+                        <i class="fa-solid fa-chevron-down horae-collapse-icon collapsed"></i>
+                    </div>
+                    <div id="horae-preset-chars-collapse-body" style="display: none;">
+                        <span class="horae-setting-hint" data-i18n="settings.presetCharactersHint" style="margin-bottom: 12px;">
+                            <i class="fa-solid fa-circle-info"></i>
+                            所有对话通用。AI 记录的角色名（或曾用名）与这里的名字或别名一致时，整份档案换成这里写的（没写的字段为空，不沿用 AI 的记录）。每行一个角色，格式同 npc: 行。只改显示和发给 AI 的内容，不改聊天里保存的原始记录，关掉即恢复。
+                        </span>
+                        <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                            <input type="checkbox" id="horae-setting-preset-chars-enabled">
+                            <span data-i18n="settings.presetCharactersEnable">启用预设角色</span>
+                        </label>
+                        <textarea id="horae-setting-preset-chars-text" class="horae-prompt-textarea" rows="6" data-i18n-placeholder="settings.presetCharactersPlaceholder" placeholder="食蜂操祈|金色长发，星形瞳孔=傲娇腹黑~性别:女~年龄:14~职业:常盘台中学学生，超能力者第五位~别名:食蜂/女王"></textarea>
+                        <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+                            <button type="button" id="horae-setting-preset-chars-apply" class="horae-btn" data-i18n="settings.presetCharactersApply">应用</button>
+                            <span id="horae-setting-preset-chars-status" class="horae-setting-sub-hint" style="margin:0;"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="horae-settings-section">
                     <div class="horae-section-header horae-collapse-header" id="horae-send-to-ai-collapse-toggle" data-i18n="settings.sendToAi">
                         <i class="fa-solid fa-paper-plane"></i>
                         发送给AI的内容

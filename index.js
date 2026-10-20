@@ -18,6 +18,7 @@ import { vectorManager } from './core/vectorManager.js';
 import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getSwipeId, getBgMarker, isMessageAnalyzed, parseBgResponse, applyAnalysisResult, metaHasState, pickMessageDelta, saveChatWideMeta, restoreChatWideMeta, isStateDumpLine, splitTrailingStateDump, DEFAULT_BG_PROMPT_EN, DEFAULT_BG_PROMPT_ZH, BG_JSON_RESPONSE_FORMAT, buildJsonEnvelopeNotice } from './core/bgAnalysis.js';
 import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText, readCanonClock, formatCanonClockLine, sameStoryDate, sameStoryTime, canonLeadMinutes } from './utils/timeUtils.js';
 import { PB_META_KEY } from './core/personaBootstrap.js';
+import { parsePresetCharacters } from './core/presetCharacters.js';
 import { createPersonaController } from './core/personaController.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
 import { initPromptDefaults, ensurePromptDefaults, ensurePresetPrompts, getPromptDefaultSync, getPresetPromptsSync, BUILTIN_PRESET_IDS } from './core/promptDefaults.js';
@@ -220,6 +221,11 @@ const DEFAULT_SETTINGS = {
         enabled: false,
         monthNames: [],
         monthDays: [],
+    },
+    // 预设角色：每行一个 npc 格式档案，按名字/别名整份替换 AI 写的角色档案（只改显示与发送的聚合状态）
+    presetCharacters: {
+        enabled: true,
+        text: '',
     },
     // 已忽略过自定义日历建议的 chatId 集合，避免同一会话反复弹窗
     _customCalendarHintDismissed: {},
@@ -4251,7 +4257,7 @@ function updateCharactersDisplay() {
                             <div class="horae-npc-select-cb" style="display:${checkboxDisplay};align-items:center;margin-right:6px;">
                                 <input type="checkbox" ${isSelected ? 'checked' : ''}>
                             </div>
-                            <div class="horae-npc-name"><i class="${genderIcon} ${genderClass}"></i> ${name}</div>
+                            <div class="horae-npc-name"><i class="${genderIcon} ${genderClass}"></i> ${name}${info._preset ? ` <i class="fa-solid fa-user-pen" style="opacity:.6;font-size:.85em" title="${t('characters.presetBadge')}"></i>` : ''}</div>
                             <div class="horae-npc-actions">
                                 <button class="horae-item-edit-btn" data-edit-type="npc" data-edit-name="${name}" title="${t('common.edit')}" style="opacity:1;position:static;">
                                     <i class="fa-solid fa-pen"></i>
@@ -10803,6 +10809,7 @@ function _sanitizeCustomCSS(input) {
         'horae-vector-collapse-body',
         'horae-advanced-collapse-body',
         'horae-custom-cal-collapse-body',
+        'horae-preset-chars-collapse-body',
         'horae-custom-tables-collapse-body',
         'horae-send-to-ai-collapse-body',
         'horae-css-collapse-body',
@@ -14240,6 +14247,7 @@ function initSettingsEvents() {
 
     $('#horae-setting-custom-cal-enabled').on('change', _applyCustomCalendarFromUI);
     $('#horae-setting-custom-cal-apply').on('click', _applyCustomCalendarFromUI);
+    $('#horae-setting-preset-chars-apply').on('click', _applyPresetCharactersFromUI);
 
     $('#horae-setting-send-characters').on('change', function () {
         settings.sendCharacters = this.checked;
@@ -14862,6 +14870,13 @@ function initSettingsEvents() {
 
     $('#horae-custom-cal-collapse-toggle').on('click', function () {
         const body = $('#horae-custom-cal-collapse-body');
+        const icon = $(this).find('.horae-collapse-icon');
+        body.slideToggle(200);
+        icon.toggleClass('collapsed');
+    });
+
+    $('#horae-preset-chars-collapse-toggle').on('click', function () {
+        const body = $('#horae-preset-chars-collapse-body');
         const icon = $(this).find('.horae-collapse-icon');
         body.slideToggle(200);
         icon.toggleClass('collapsed');
@@ -15830,6 +15845,27 @@ function _showExternalSettingsModal(raw, displayLang) {
     });
 }
 
+/** 预设角色：保存 textarea 原文，刷新角色面板与提示词 */
+function _applyPresetCharactersFromUI() {
+    if (!settings.presetCharacters) settings.presetCharacters = { enabled: true, text: '' };
+    settings.presetCharacters.text = String($('#horae-setting-preset-chars-text').val() || '');
+    settings.presetCharacters.enabled = $('#horae-setting-preset-chars-enabled').is(':checked');
+    saveSettings();
+    horaeManager.init(getContext(), settings);
+    _syncPresetCharactersToUI();
+    updateCharactersDisplay();
+    _refreshSystemPromptDisplay();
+}
+
+/** 把 settings.presetCharacters 回填到 UI，并显示解析出的角色数 */
+function _syncPresetCharactersToUI() {
+    const cfg = settings.presetCharacters || {};
+    $('#horae-setting-preset-chars-enabled').prop('checked', cfg.enabled !== false);
+    $('#horae-setting-preset-chars-text').val(cfg.text || '');
+    const names = parsePresetCharacters(cfg.text, (str) => horaeManager._parseNpcFields(str)).map(p => p.name);
+    $('#horae-setting-preset-chars-status').text(names.length ? t('settings.presetCharactersStatus', { count: names.length, names: names.join('、') }) : '');
+}
+
 /** 把 settings.customCalendar 回填到 UI textarea */
 function _syncCustomCalendarToUI() {
     const cal = settings.customCalendar || {};
@@ -16096,6 +16132,7 @@ function syncSettingsToUI() {
     $('#horae-setting-send-timeline').prop('checked', settings.sendTimeline);
     $('#horae-setting-context-depth').val(Number.isFinite(parseInt(settings.contextDepth, 10)) ? Math.max(0, parseInt(settings.contextDepth, 10)) : 15);
     _syncCustomCalendarToUI();
+    _syncPresetCharactersToUI();
     $('#horae-setting-send-characters').prop('checked', settings.sendCharacters);
     $('#horae-setting-send-character-affection').prop('checked', settings.sendCharacterAffection !== false);
     $('#horae-setting-send-main-character-personality').prop('checked', settings.sendMainCharacterPersonality !== false);
