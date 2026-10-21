@@ -19,6 +19,7 @@ import { BackgroundAnalyzer, BG_STATUS, BG_MARKER_VERSION, fingerprintText, getS
 import { calculateRelativeTime, calculateDetailedRelativeTime, formatRelativeTime, generateTimeReference, getCurrentSystemTime, formatStoryDate, formatFullDateTime, parseStoryDate, buildLorebookScanText, readCanonClock, formatCanonClockLine, sameStoryDate, sameStoryTime, canonLeadMinutes } from './utils/timeUtils.js';
 import { PB_META_KEY } from './core/personaBootstrap.js';
 import { parsePresetCharacters } from './core/presetCharacters.js';
+import { createRegenTracker } from './core/rpgRegen.js';
 import { createPersonaController } from './core/personaController.js';
 import { t, tForLang, initI18n, getLanguage, isZhLocale, setLanguage, detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './core/i18n.js';
 import { initPromptDefaults, ensurePromptDefaults, ensurePresetPrompts, getPromptDefaultSync, getPresetPromptsSync, BUILTIN_PRESET_IDS } from './core/promptDefaults.js';
@@ -249,6 +250,7 @@ const DEFAULT_SETTINGS = {
     rpgUserOnly: false,             // RPG全局仅限主角（总开关，联动所有子模块）
     sendRpgStronghold: false,       // 发送据点/基地系统
     rpgBarConfig: [],
+    rpgRegen: {},                   // 属性条自动回复 { key: { on, pct } }：按剧情时间每小时回复上限的 pct%（不经 AI）
     rpgAttributeConfig: [],
     rpgAttrViewMode: 'radar',       // 'radar' 或 'text'
     customRpgPrompt: '',            // 自定义RPG提示词（空=默认）
@@ -344,7 +346,7 @@ const _SETTINGS_EXPORT_KEYS = [
     'sendRpgEquipment', 'sendRpgLevel', 'sendRpgCurrency', 'sendRpgStronghold', 'rpgDiceEnabled',
     'rpgStrictPresentOnly', 'rpgBarsUserOnly', 'rpgSkillsUserOnly', 'rpgAttrsUserOnly', 'rpgReputationUserOnly',
     'rpgEquipmentUserOnly', 'rpgLevelUserOnly', 'rpgCurrencyUserOnly', 'rpgUserOnly',
-    'rpgBarConfig', 'rpgAttributeConfig', 'rpgAttrViewMode', 'equipmentTemplates',
+    'rpgBarConfig', 'rpgRegen', 'rpgAttributeConfig', 'rpgAttrViewMode', 'equipmentTemplates',
     'autoSummaryEnabled', 'autoSummaryKeepRecent', 'autoSummarySourceMode',
     'autoSummaryBufferMode', 'autoSummaryBufferMsgLimit', 'autoSummaryBufferTokenLimit',
     'autoSummaryResummaryThreshold', 'autoSummaryResummaryMinChars',
@@ -7452,6 +7454,62 @@ function renderBarConfig() {
             <button class="horae-rpg-config-del" data-idx="${i}" title="${t('common.delete')}"><i class="fa-solid fa-xmark"></i></button>
         </div>
     `).join('');
+    _syncRegenButton();
+}
+
+/** 自动回复按钮：有属性条开启时高亮 */
+function _syncRegenButton() {
+    const on = Object.values(settings.rpgRegen || {}).some(c => c?.on && Number(c.pct) > 0);
+    document.getElementById('horae-rpg-bar-regen')?.classList.toggle('horae-rpg-regen-on', on);
+}
+
+/** 属性条自动回复设置窗：每个属性条一行（开关 + 每小时百分比） */
+function _openRpgRegenDialog() {
+    const bars = horaeManager.getEffectiveBarConfig?.() || settings.rpgBarConfig || [];
+    const cfg = settings.rpgRegen || {};
+    const modal = document.createElement('div');
+    modal.className = 'horae-modal';
+    const rows = bars.map(b => {
+        const c = cfg[b.key] || {};
+        return `
+            <div class="horae-rpg-regen-row" data-key="${escapeHtml(b.key)}">
+                <span class="horae-rpg-regen-name" title="${escapeHtml(b.key)}">${escapeHtml(b.name || b.key)}</span>
+                <input class="horae-rpg-regen-pct" type="number" min="0" max="100" step="1" value="${Number(c.pct) > 0 ? Number(c.pct) : 10}" />
+                <span>${t('ui.rpgRegenUnit')}</span>
+                <input class="horae-rpg-regen-on-check" type="checkbox" ${c.on ? 'checked' : ''} />
+            </div>`;
+    }).join('');
+    modal.innerHTML = `
+        <div class="horae-modal-content" style="max-width:360px;width:92vw;box-sizing:border-box;">
+            <div class="horae-modal-header"><h3>${t('ui.rpgRegenTitle')}</h3></div>
+            <div class="horae-modal-body">
+                <p style="margin-bottom:8px;opacity:.7;font-size:.9em;">${t('ui.rpgRegenHint')}</p>
+                ${rows || `<p>${t('ui.rpgRegenEmpty')}</p>`}
+            </div>
+            <div class="horae-modal-footer">
+                <button class="horae-btn primary horae-rpg-regen-ok">${t('common.confirm')}</button>
+                <button class="horae-btn horae-rpg-regen-cancel">${t('common.cancel')}</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    preventModalBubble(modal);
+    modal.querySelector('.horae-rpg-regen-ok').onclick = () => {
+        const next = { ...cfg };
+        modal.querySelectorAll('.horae-rpg-regen-row').forEach(row => {
+            const pct = Math.max(0, Math.min(100, Number(row.querySelector('.horae-rpg-regen-pct').value) || 0));
+            next[row.dataset.key] = { on: row.querySelector('.horae-rpg-regen-on-check').checked, pct };
+        });
+        settings.rpgRegen = next;
+        saveSettings();
+        modal.remove();
+        _syncRegenButton();
+        updateRpgDisplay();
+        updateAllRpgHuds();
+        _refreshSystemPromptDisplay();
+        updateTokenCounter();
+    };
+    modal.querySelector('.horae-rpg-regen-cancel').onclick = () => modal.remove();
 }
 
 /** 构建角色下拉选项（{{user}} + NPC列表） */
@@ -9885,7 +9943,10 @@ function _buildRpgSnapshotMap(chat) {
 
     // 与 getRpgStateAt / rebuildRpgData 相同的时间线语义：开局基线 → 各楼层增量（含第 0 条）
     const steps = horaeManager._baselineSteps();
+    // 属性条自动回复：与 getRpgStateAt 相同的推算（只改快照）
+    const regen = settings.rpgMode ? createRegenTracker(settings.rpgRegen) : null;
     const applyChanges = (changes, i) => {
+            regen?.noteBars(changes.bars, resolve);
             for (const [raw, bd] of Object.entries(changes.bars || {})) {
                 const o = resolve(raw);
                 if (!acc.bars[o]) acc.bars[o] = {};
@@ -9930,10 +9991,12 @@ function _buildRpgSnapshotMap(chat) {
     const applySteps = (at) => { for (const s of steps.get(at) || []) applyChanges(s.rpgChanges, -1); };
     applySteps(-1);
     for (let i = 0; i < chat.length; i++) {
+        regen?.setTime(chat[i]?.horae_meta?.timestamp);
         const changes = chat[i]?.horae_meta?._rpgChanges;
         if (changes) applyChanges(changes, i);
         applySteps(i);
         const snap = JSON.parse(JSON.stringify(acc));
+        regen?.apply(snap.bars);
         snap.currencyConfig = curConfig;
         map.set(i, snap);
     }
@@ -13587,6 +13650,7 @@ function initSettingsEvents() {
         this.value = '';
     });
 
+    $('#horae-rpg-bar-regen').on('click', _openRpgRegenDialog);
     $('#horae-rpg-add-bar').on('click', () => {
         if (!settings.rpgBarConfig) settings.rpgBarConfig = [];
         const existing = new Set(settings.rpgBarConfig.map(b => b.key));

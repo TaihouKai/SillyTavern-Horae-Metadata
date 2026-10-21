@@ -6530,6 +6530,11 @@ body .horae-context-menu {
     color: var(--horae-text);
 }
 .horae-rpg-btn-muted { opacity: 0.6; }
+/* 属性条自动回复：有属性条开启时按钮高亮 */
+.horae-rpg-btn-sm.horae-rpg-regen-on { color: var(--horae-primary, #7c3aed); border-color: var(--horae-primary, #7c3aed); }
+.horae-rpg-regen-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.horae-rpg-regen-row .horae-rpg-regen-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.horae-rpg-regen-row .horae-rpg-regen-pct { width: 64px; }
 
 /* 属性条配置 */
 .horae-rpg-config-section { margin-bottom: 12px; }

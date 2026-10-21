@@ -8,6 +8,7 @@ import { detectEffectiveAiLangIsZh, detectEffectiveAiLang } from './i18n.js';
 import { getPromptDefaultSync } from './promptDefaults.js';
 import { baselineSteps, applyBaselineItems, applyBaselineStrongholds, isRecordActive } from './personaBootstrap.js';
 import { applyPresetCharacters } from './presetCharacters.js';
+import { createRegenTracker } from './rpgRegen.js';
 
 /**
  * @typedef {Object} HoraeTimestamp
@@ -2656,7 +2657,10 @@ class HoraeManager {
 
         // 从消息中累积属性（snapshot 是独立对象，不污染 chat[0]）
         const _resolve = (raw) => this._resolveRpgOwner(raw);
+        // 属性条自动回复（按剧情时间推算，只改快照；见 rpgRegen.js）
+        const regen = this.settings?.rpgMode ? createRegenTracker(this.settings?.rpgRegen) : null;
         const applyChanges = (changes, i) => {
+            regen?.noteBars(changes.bars, _resolve);
             for (const [raw, barData] of Object.entries(changes.bars || {})) {
                 const owner = _resolve(raw);
                 if (!snapshot.bars[owner]) snapshot.bars[owner] = {};
@@ -2774,10 +2778,12 @@ class HoraeManager {
         };
         applySteps(-1);
         for (let i = 0; i < end; i++) {
+            regen?.setTime(chat[i]?.horae_meta?.timestamp);
             const changes = chat[i]?.horae_meta?._rpgChanges;
             if (changes) applyChanges(changes, i);
             applySteps(i);
         }
+        regen?.apply(snapshot.bars);
 
         // 合入用户手动属性（AI数据优先覆盖）
         for (const [owner, vals] of Object.entries(userAttrs)) {
