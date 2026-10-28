@@ -14312,6 +14312,7 @@ function initSettingsEvents() {
     $('#horae-setting-custom-cal-enabled').on('change', _applyCustomCalendarFromUI);
     $('#horae-setting-custom-cal-apply').on('click', _applyCustomCalendarFromUI);
     $('#horae-setting-preset-chars-apply').on('click', _applyPresetCharactersFromUI);
+    _bindPresetCharsPresetEvents();
 
     $('#horae-setting-send-characters').on('change', function () {
         settings.sendCharacters = this.checked;
@@ -15909,11 +15910,41 @@ function _showExternalSettingsModal(raw, displayLang) {
     });
 }
 
+/**
+ * 预设角色配置：多个预设（每个一整段文本），同一时间只生效一个。
+ * 生效预设的文本同时写在 presetCharacters.text（applyPresetCharacters 只读它）。
+ * 旧版只有 text：迁移为名为 toaru 的预设。
+ */
+function _presetCharsConfig() {
+    if (!settings.presetCharacters) settings.presetCharacters = { enabled: true, text: '' };
+    const cfg = settings.presetCharacters;
+    if (!Array.isArray(cfg.presets) || !cfg.presets.length) {
+        cfg.presets = [{ name: 'toaru', text: cfg.text || '' }];
+        cfg.active = 'toaru';
+    }
+    if (!cfg.presets.some(p => p.name === cfg.active)) cfg.active = cfg.presets[0].name;
+    return cfg;
+}
+
+const _activePresetChars = (cfg) => cfg.presets.find(p => p.name === cfg.active);
+
+/** 把 textarea 的内容记入当前预设（切换/新建前调用，避免丢失未应用的修改） */
+function _stashPresetCharsText(cfg) {
+    const cur = _activePresetChars(cfg);
+    if (cur) cur.text = String($('#horae-setting-preset-chars-text').val() || '');
+}
+
 /** 预设角色：保存 textarea 原文，刷新角色面板与提示词 */
 function _applyPresetCharactersFromUI() {
-    if (!settings.presetCharacters) settings.presetCharacters = { enabled: true, text: '' };
-    settings.presetCharacters.text = String($('#horae-setting-preset-chars-text').val() || '');
-    settings.presetCharacters.enabled = $('#horae-setting-preset-chars-enabled').is(':checked');
+    const cfg = _presetCharsConfig();
+    _stashPresetCharsText(cfg);
+    _commitPresetChars(cfg);
+}
+
+/** 生效预设 → presetCharacters.text，保存并刷新 */
+function _commitPresetChars(cfg) {
+    cfg.text = _activePresetChars(cfg)?.text || '';
+    cfg.enabled = $('#horae-setting-preset-chars-enabled').is(':checked');
     saveSettings();
     horaeManager.init(getContext(), settings);
     _syncPresetCharactersToUI();
@@ -15921,11 +15952,59 @@ function _applyPresetCharactersFromUI() {
     _refreshSystemPromptDisplay();
 }
 
+/** 询问预设名称；重名或取消时返回 null */
+function _askPresetCharsName(cfg, initial = '', except = null) {
+    const name = (prompt(t('settings.presetCharactersNamePrompt'), initial) || '').trim();
+    if (!name) return null;
+    if (name !== except && cfg.presets.some(p => p.name === name)) {
+        showToast(t('settings.presetCharactersNameTaken', { name }), 'warning');
+        return null;
+    }
+    return name;
+}
+
+function _bindPresetCharsPresetEvents() {
+    $('#horae-preset-chars-select').on('change', function () {
+        const cfg = _presetCharsConfig();
+        _stashPresetCharsText(cfg);
+        cfg.active = this.value;
+        _commitPresetChars(cfg);
+    });
+    $('#horae-preset-chars-new').on('click', () => {
+        const cfg = _presetCharsConfig();
+        const name = _askPresetCharsName(cfg);
+        if (!name) return;
+        _stashPresetCharsText(cfg);
+        cfg.presets.push({ name, text: '' });
+        cfg.active = name;
+        _commitPresetChars(cfg);
+    });
+    $('#horae-preset-chars-rename').on('click', () => {
+        const cfg = _presetCharsConfig();
+        const cur = _activePresetChars(cfg);
+        const name = _askPresetCharsName(cfg, cur.name, cur.name);
+        if (!name || name === cur.name) return;
+        cur.name = name;
+        cfg.active = name;
+        _stashPresetCharsText(cfg);
+        _commitPresetChars(cfg);
+    });
+    $('#horae-preset-chars-delete').on('click', () => {
+        const cfg = _presetCharsConfig();
+        if (!confirm(t('settings.presetCharactersDeleteConfirm', { name: cfg.active }))) return;
+        cfg.presets = cfg.presets.filter(p => p.name !== cfg.active);
+        if (!cfg.presets.length) cfg.presets.push({ name: t('settings.presetCharactersDefaultName'), text: '' });
+        cfg.active = cfg.presets[0].name;
+        _commitPresetChars(cfg);
+    });
+}
+
 /** 把 settings.presetCharacters 回填到 UI，并显示解析出的角色数 */
 function _syncPresetCharactersToUI() {
-    const cfg = settings.presetCharacters || {};
+    const cfg = _presetCharsConfig();
+    $('#horae-preset-chars-select').html(cfg.presets.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`).join('')).val(cfg.active);
     $('#horae-setting-preset-chars-enabled').prop('checked', cfg.enabled !== false);
-    $('#horae-setting-preset-chars-text').val(cfg.text || '');
+    $('#horae-setting-preset-chars-text').val(_activePresetChars(cfg)?.text || '');
     const names = parsePresetCharacters(cfg.text, (str) => horaeManager._parseNpcFields(str)).map(p => p.name);
     $('#horae-setting-preset-chars-status').text(names.length ? t('settings.presetCharactersStatus', { count: names.length, names: names.join('、') }) : '');
 }

@@ -958,12 +958,19 @@
                     <div id="horae-preset-chars-collapse-body" style="display: none;">
                         <span class="horae-setting-hint" data-i18n="settings.presetCharactersHint" style="margin-bottom: 12px;">
                             <i class="fa-solid fa-circle-info"></i>
-                            所有对话通用。AI 记录的角色名（或曾用名）与这里的名字或别名一致时，用这里写了的字段覆盖 AI 写的档案；没写的字段（例如 补充、@关系）照常由 Horae 记录。每行一个角色，格式同 npc: 行。只改显示和发给 AI 的内容，不改聊天里保存的原始记录，关掉即恢复。
+                            所有对话通用。AI 记录的角色名（或曾用名）与这里的名字或别名一致时，用这里写了的字段覆盖 AI 写的档案；没写的字段（例如 补充、@关系）照常由 Horae 记录。每行一个角色，格式同 npc: 行。只改显示和发给 AI 的内容，不改聊天里保存的原始记录，关掉即恢复。可保存多个预设（每个一整段文本），同一时间只生效所选的一个。
                         </span>
                         <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
                             <input type="checkbox" id="horae-setting-preset-chars-enabled">
                             <span data-i18n="settings.presetCharactersEnable">启用预设角色</span>
                         </label>
+                        <div class="horae-prompt-presets-bar">
+                            <i class="fa-solid fa-bookmark" style="opacity:.5;font-size:12px"></i>
+                            <select id="horae-preset-chars-select" data-i18n-title="settings.presetCharactersSelect" title=""></select>
+                            <button type="button" id="horae-preset-chars-new" class="horae-rpg-btn-sm" data-i18n-title="settings.presetCharactersNew" title=""><i class="fa-solid fa-plus"></i></button>
+                            <button type="button" id="horae-preset-chars-rename" class="horae-rpg-btn-sm" data-i18n-title="settings.presetCharactersRename" title=""><i class="fa-solid fa-pen"></i></button>
+                            <button type="button" id="horae-preset-chars-delete" class="horae-rpg-btn-sm" data-i18n-title="settings.presetCharactersDelete" title=""><i class="fa-solid fa-trash"></i></button>
+                        </div>
                         <textarea id="horae-setting-preset-chars-text" class="horae-prompt-textarea" rows="6" data-i18n-placeholder="settings.presetCharactersPlaceholder" placeholder="食蜂操祈|金色长发，星形瞳孔=傲娇腹黑~性别:女~年龄:14~职业:常盘台中学学生，超能力者第五位~别名:食蜂/女王"></textarea>
                         <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
                             <button type="button" id="horae-setting-preset-chars-apply" class="horae-btn" data-i18n="settings.presetCharactersApply">应用</button>

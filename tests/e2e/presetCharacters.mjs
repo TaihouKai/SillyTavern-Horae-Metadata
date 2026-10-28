@@ -58,6 +58,35 @@ try {
     });
     check('turning it off restores the AI profile', off === '金发少女', off);
 
+    // 多个预设：旧设置迁移为 toaru；新建/切换/重命名/删除
+    const multi = await page.evaluate(() => {
+        const cfg = () => SillyTavern.getContext().extensionSettings.horae.presetCharacters;
+        const appearance = () => window.Horae.getLatestState().npcs?.['食蜂操祈']?.appearance;
+        const r = { migrated: cfg().presets.map(p => p.name).join(',') + '|' + cfg().active };
+        $('#horae-setting-preset-chars-enabled').prop('checked', true);
+        $('#horae-setting-preset-chars-apply').trigger('click');
+        r.onAgain = appearance();
+        window.prompt = () => '空白';
+        $('#horae-preset-chars-new').trigger('click');
+        r.afterNew = { names: cfg().presets.map(p => p.name).join(','), active: cfg().active, text: $('#horae-setting-preset-chars-text').val(), appearance: appearance() };
+        $('#horae-preset-chars-select').val('toaru').trigger('change');
+        r.afterSwitch = { active: cfg().active, textKept: $('#horae-setting-preset-chars-text').val().includes('食蜂操祈|'), appearance: appearance() };
+        window.prompt = () => '学园都市';
+        $('#horae-preset-chars-rename').trigger('click');
+        r.afterRename = { names: cfg().presets.map(p => p.name).join(','), active: cfg().active, option: $('#horae-preset-chars-select').val() };
+        $('#horae-preset-chars-select').val('空白').trigger('change');
+        window.confirm = () => true;
+        $('#horae-preset-chars-delete').trigger('click');
+        r.afterDelete = { names: cfg().presets.map(p => p.name).join(','), active: cfg().active, appearance: appearance() };
+        return r;
+    });
+    check('existing preset text is migrated into a preset named toaru', multi.migrated === 'toaru|toaru', multi.migrated);
+    check('re-enabling applies the toaru preset again', multi.onAgain === '金色长发，星形瞳孔', multi.onAgain);
+    check('new preset starts empty, becomes active, AI profile shows', multi.afterNew.names === 'toaru,空白' && multi.afterNew.active === '空白' && multi.afterNew.text === '' && multi.afterNew.appearance === '金发少女', JSON.stringify(multi.afterNew));
+    check('switching back loads and applies that preset', multi.afterSwitch.active === 'toaru' && multi.afterSwitch.textKept && multi.afterSwitch.appearance === '金色长发，星形瞳孔', JSON.stringify(multi.afterSwitch));
+    check('rename keeps the preset active', multi.afterRename.names === '学园都市,空白' && multi.afterRename.active === '学园都市' && multi.afterRename.option === '学园都市', JSON.stringify(multi.afterRename));
+    check('delete removes the preset and falls back to the remaining one', multi.afterDelete.names === '学园都市' && multi.afterDelete.active === '学园都市' && multi.afterDelete.appearance === '金色长发，星形瞳孔', JSON.stringify(multi.afterDelete));
+
     const errs = consoleLines.filter(l => /^\[(error|pageerror)\]/.test(l) && /horae/i.test(l) && !/TavernHelper/.test(l));
     check('no Horae errors', errs.length === 0, errs.slice(0, 3).join(' | '));
 } catch (e) { console.log('ERR', e.message.split('\n')[0]); results.push(false); }
