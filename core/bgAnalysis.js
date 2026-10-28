@@ -461,6 +461,8 @@ export class BackgroundAnalyzer {
         const message = chat?.[messageIndex];
         if (!message || message.is_user || message.is_system) return false;
         if (message.horae_meta?._skipHorae) return false;
+        // 开场白（第 0 条 GM 消息）不自动分析；手动点「分析」仍可
+        if (messageIndex === 0 && opts.reason !== 'manual') return false;
         if (!String(message.mes ?? '').trim()) return false;
         if (!opts.force && isMessageAnalyzed(message)) return false;
 

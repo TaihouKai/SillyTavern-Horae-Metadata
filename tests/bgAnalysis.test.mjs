@@ -122,6 +122,17 @@ test('scheduler: user / empty / sideplay messages are never analyzed', () => {
     assert.equal(h.analyzer.schedule(3), false);
 });
 
+test('scheduler: the opening GM message is skipped unless analyzed manually', async () => {
+    const chatRef = { chat: [msg('greeting'), msg('act', { user: true }), msg('reply one')] };
+    setup(chatRef.chat);
+    const h = makeAnalyzer(chatRef);
+    for (const reason of ['received', 'swipe', 'edit', 'resume']) assert.equal(h.analyzer.schedule(0, { reason }), false, reason);
+    assert.equal(h.analyzer.schedule(0, { force: true, reason: 'user-edit' }), false);
+    assert.equal(h.analyzer.schedule(0, { force: true, reason: 'manual' }), true);
+    await h.analyzer.waitForIdle(1000);
+    assert.equal(h.calls.length, 1);
+});
+
 test('scheduler: messages are analyzed in narrative order', async () => {
     const chatRef = { chat: [msg('g'), msg('u1', { user: true }), msg('a1'), msg('u2', { user: true }), msg('a2'), msg('a3')] };
     const h = makeAnalyzer(chatRef, { manual: true });
